@@ -126,7 +126,13 @@ public struct ProviderSettingsSnapshot: Sendable {
     }
 
     public struct CopilotProviderSettings: Sendable {
-        public init() {}
+        public let enterpriseURL: String?
+        public let config: ProviderConfig?
+
+        public init(enterpriseURL: String? = nil, config: ProviderConfig? = nil) {
+            self.enterpriseURL = enterpriseURL
+            self.config = config
+        }
     }
 
     public struct KimiProviderSettings: Sendable {

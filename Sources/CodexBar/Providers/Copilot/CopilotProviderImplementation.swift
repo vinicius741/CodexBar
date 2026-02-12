@@ -54,6 +54,16 @@ struct CopilotProviderImplementation: ProviderImplementation {
                 ],
                 isVisible: nil,
                 onActivate: { context.settings.ensureCopilotAPITokenLoaded() }),
+            ProviderSettingsFieldDescriptor(
+                id: "copilot-enterprise-url",
+                title: "GitHub Enterprise URL",
+                subtitle: "Your GHE subdomain (e.g., octocorp.ghe.com). Leave empty for github.com.",
+                kind: .plain,
+                placeholder: "github.com",
+                binding: context.stringBinding(\.copilotEnterpriseURL),
+                actions: [],
+                isVisible: nil,
+                onActivate: {}),
         ]
     }
 

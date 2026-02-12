@@ -5,15 +5,15 @@ import FoundationNetworking
 
 public struct CopilotUsageFetcher: Sendable {
     private let token: String
+    private let endpoint: CopilotEndpoint
 
-    public init(token: String) {
+    public init(token: String, endpoint: CopilotEndpoint = .default) {
         self.token = token
+        self.endpoint = endpoint
     }
 
     public func fetch() async throws -> UsageSnapshot {
-        guard let url = URL(string: "https://api.github.com/copilot_internal/user") else {
-            throw URLError(.badURL)
-        }
+        let url = self.endpoint.usageAPIURL
 
         var request = URLRequest(url: url)
         // Use the GitHub OAuth token directly, not the Copilot token.

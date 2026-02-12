@@ -37,11 +37,18 @@ extension StatusItemController {
         let provider = preferred ?? .codex
         let meta = self.store.metadata(for: provider)
 
-        // For Claude, route subscription users to claude.ai/settings/usage instead of console billing
-        let urlString: String? = if provider == .claude, self.store.isClaudeSubscription() {
-            meta.subscriptionDashboardURL ?? meta.dashboardURL
+        // For Copilot, use dynamic endpoint URL
+        let urlString: String?
+        if provider == .copilot {
+            let endpoint = CopilotSettingsReader.resolveEndpoint(
+                environment: ProcessInfo.processInfo.environment,
+                config: self.settings.configSnapshot.providerConfig(for: .copilot))
+            urlString = endpoint.dashboardURL.absoluteString
+        } else if provider == .claude, self.store.isClaudeSubscription() {
+            // For Claude, route subscription users to claude.ai/settings/usage instead of console billing
+            urlString = meta.subscriptionDashboardURL ?? meta.dashboardURL
         } else {
-            meta.dashboardURL
+            urlString = meta.dashboardURL
         }
 
         guard let urlString, let url = URL(string: urlString) else { return }

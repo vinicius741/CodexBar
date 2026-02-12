@@ -5,7 +5,10 @@ import SwiftUI
 @MainActor
 struct CopilotLoginFlow {
     static func run(settings: SettingsStore) async {
-        let flow = CopilotDeviceFlow()
+        let endpoint = CopilotSettingsReader.resolveEndpoint(
+            environment: ProcessInfo.processInfo.environment,
+            config: settings.configSnapshot.providerConfig(for: .copilot))
+        let flow = CopilotDeviceFlow(endpoint: endpoint)
 
         do {
             let code = try await flow.requestDeviceCode()

@@ -6,6 +6,7 @@ import FoundationNetworking
 public struct CopilotDeviceFlow: Sendable {
     private let clientID = "Iv1.b507a08c87ecfe98" // VS Code Client ID
     private let scopes = "read:user"
+    private let endpoint: CopilotEndpoint
 
     public struct DeviceCodeResponse: Decodable, Sendable {
         public let deviceCode: String
@@ -35,24 +36,24 @@ public struct CopilotDeviceFlow: Sendable {
         }
     }
 
-    public init() {}
+    public init(endpoint: CopilotEndpoint = .default) {
+        self.endpoint = endpoint
+    }
 
     public func requestDeviceCode() async throws -> DeviceCodeResponse {
-        let components = URLComponents(string: "https://github.com/login/device/code")!
-        let request = URLRequest(url: components.url!)
-
-        var postRequest = request
-        postRequest.httpMethod = "POST"
-        postRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        postRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let url = self.endpoint.deviceCodeURL
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
         let body = [
             "client_id": self.clientID,
             "scope": self.scopes,
         ]
-        postRequest.httpBody = Self.formURLEncodedBody(body)
+        request.httpBody = Self.formURLEncodedBody(body)
 
-        let (data, response) = try await URLSession.shared.data(for: postRequest)
+        let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)
@@ -62,7 +63,7 @@ public struct CopilotDeviceFlow: Sendable {
     }
 
     public func pollForToken(deviceCode: String, interval: Int) async throws -> String {
-        let url = URL(string: "https://github.com/login/oauth/access_token")!
+        let url = self.endpoint.accessTokenURL
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
