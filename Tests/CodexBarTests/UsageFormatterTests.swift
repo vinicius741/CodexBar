@@ -206,4 +206,64 @@ struct UsageFormatterTests {
         let result = UsageFormatter.creditsString(from: 42.5)
         #expect(result == "42.5 left")
     }
+
+    // MARK: - Days Left & Daily Budget
+
+    @Test
+    func daysUntilResetReturnsCorrectDays() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval(5 * 86400 + 3600) // 5 days + 1 hour
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        #expect(days == 6) // Ceiling of 5.04 = 6
+    }
+
+    @Test
+    func daysUntilResetReturnsOneDayForSmallRemaining() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval(3600) // 1 hour
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        #expect(days == 1) // Minimum is 1
+    }
+
+    @Test
+    func daysUntilResetReturnsNilForPastDate() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval(-100)
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        #expect(days == nil)
+    }
+
+    @Test
+    func daysUntilResetReturnsNilForNilDate() {
+        let days = UsageFormatter.daysUntilReset(from: nil)
+        #expect(days == nil)
+    }
+
+    @Test
+    func daysLeftStringFormatsSingular() {
+        #expect(UsageFormatter.daysLeftString(days: 1) == "1 day left")
+    }
+
+    @Test
+    func daysLeftStringFormatsPlural() {
+        #expect(UsageFormatter.daysLeftString(days: 6) == "6 days left")
+    }
+
+    @Test
+    func dailyBudgetStringCalculatesCorrectly() {
+        let result = UsageFormatter.dailyBudgetString(remainingPercent: 75, daysLeft: 6)
+        #expect(result == "12.5% per day")
+    }
+
+    @Test
+    func dailyBudgetStringHandlesZeroDays() {
+        let result = UsageFormatter.dailyBudgetString(remainingPercent: 50, daysLeft: 0)
+        #expect(result == "0% per day")
+    }
+
+    @Test
+    func dailyBudgetStringHandlesZeroRemaining() {
+        let result = UsageFormatter.dailyBudgetString(remainingPercent: 0, daysLeft: 5)
+        #expect(result == "0.0% per day")
+    }
 }

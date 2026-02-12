@@ -131,7 +131,8 @@ struct MenuDescriptor {
                     title: meta.sessionLabel,
                     window: primaryWindow,
                     resetStyle: resetStyle,
-                    showUsed: settings.usageBarsShowUsed)
+                    showUsed: settings.usageBarsShowUsed,
+                    provider: provider)
                 if provider == .warp,
                    let detail = primary.resetDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !detail.isEmpty
@@ -151,7 +152,8 @@ struct MenuDescriptor {
                     window: weekly,
                     resetStyle: resetStyle,
                     showUsed: settings.usageBarsShowUsed,
-                    resetOverride: weeklyResetOverride)
+                    resetOverride: weeklyResetOverride,
+                    provider: provider)
                 if let paceSummary = UsagePaceText.weeklySummary(provider: provider, window: weekly) {
                     entries.append(.text(paceSummary, .secondary))
                 }
@@ -162,7 +164,8 @@ struct MenuDescriptor {
                     title: meta.opusLabel ?? "Sonnet",
                     window: opus,
                     resetStyle: resetStyle,
-                    showUsed: settings.usageBarsShowUsed)
+                    showUsed: settings.usageBarsShowUsed,
+                    provider: provider)
             }
 
             if let cost = snap.providerCost {
@@ -367,7 +370,8 @@ struct MenuDescriptor {
         window: RateWindow,
         resetStyle: ResetTimeDisplayStyle,
         showUsed: Bool,
-        resetOverride: String? = nil)
+        resetOverride: String? = nil,
+        provider: UsageProvider? = nil)
     {
         let line = UsageFormatter
             .usageLine(remaining: window.remainingPercent, used: window.usedPercent, showUsed: showUsed)
@@ -376,6 +380,16 @@ struct MenuDescriptor {
             entries.append(.text(resetOverride, .secondary))
         } else if let reset = UsageFormatter.resetLine(for: window, style: resetStyle) {
             entries.append(.text(reset, .secondary))
+        }
+
+        // Add days left and daily budget for Copilot
+        if provider == .copilot,
+           let daysLeft = UsageFormatter.daysUntilReset(from: window.resetsAt)
+        {
+            entries.append(.text(UsageFormatter.daysLeftString(days: daysLeft), .secondary))
+            entries.append(.text(UsageFormatter.dailyBudgetString(
+                remainingPercent: window.remainingPercent,
+                daysLeft: daysLeft), .secondary))
         }
     }
 

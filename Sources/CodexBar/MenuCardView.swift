@@ -739,11 +739,9 @@ extension UsageMenuCardView.Model {
         guard let snapshot = input.snapshot else { return [] }
         var metrics: [Metric] = []
         let percentStyle: PercentStyle = input.usageBarsShowUsed ? .used : .left
-        let zaiUsage = input.provider == .zai ? snapshot.zaiUsage : nil
-        let zaiTokenDetail = Self.zaiLimitDetailText(limit: zaiUsage?.tokenLimit)
-        let zaiTimeDetail = Self.zaiLimitDetailText(limit: zaiUsage?.timeLimit)
         if let primary = snapshot.primary {
-            var primaryDetailText: String? = input.provider == .zai ? zaiTokenDetail : nil
+            let copilotDetail = input.provider == .copilot ? Self.copilotBudgetDetail(for: primary, now: input.now) : nil
+            var primaryDetailText: String?
             var primaryResetText = Self.resetText(for: primary, style: input.resetTimeDisplayStyle, now: input.now)
             if input.provider == .warp,
                let detail = primary.resetDescription,
@@ -762,8 +760,8 @@ extension UsageMenuCardView.Model {
                 percentStyle: percentStyle,
                 resetText: primaryResetText,
                 detailText: primaryDetailText,
-                detailLeftText: nil,
-                detailRightText: nil,
+                detailLeftText: copilotDetail?.daysLeftText,
+                detailRightText: copilotDetail?.dailyBudgetText,
                 pacePercent: nil,
                 paceOnTop: true))
         }
@@ -773,8 +771,9 @@ extension UsageMenuCardView.Model {
                 window: weekly,
                 now: input.now,
                 showUsed: input.usageBarsShowUsed)
+            let copilotDetail = input.provider == .copilot ? Self.copilotBudgetDetail(for: weekly, now: input.now) : nil
             var weeklyResetText = Self.resetText(for: weekly, style: input.resetTimeDisplayStyle, now: input.now)
-            var weeklyDetailText: String? = input.provider == .zai ? zaiTimeDetail : nil
+            var weeklyDetailText: String?
             if input.provider == .warp,
                let detail = weekly.resetDescription,
                !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -789,8 +788,8 @@ extension UsageMenuCardView.Model {
                 percentStyle: percentStyle,
                 resetText: weeklyResetText,
                 detailText: weeklyDetailText,
-                detailLeftText: paceDetail?.leftLabel,
-                detailRightText: paceDetail?.rightLabel,
+                detailLeftText: paceDetail?.leftLabel ?? copilotDetail?.daysLeftText,
+                detailRightText: paceDetail?.rightLabel ?? copilotDetail?.dailyBudgetText,
                 pacePercent: paceDetail?.pacePercent,
                 paceOnTop: paceDetail?.paceOnTop ?? true))
         }
@@ -825,27 +824,25 @@ extension UsageMenuCardView.Model {
         return metrics
     }
 
-    private static func zaiLimitDetailText(limit: ZaiLimitEntry?) -> String? {
-        guard let limit else { return nil }
-
-        if let currentValue = limit.currentValue,
-           let usage = limit.usage,
-           let remaining = limit.remaining
-        {
-            let currentStr = UsageFormatter.tokenCountString(currentValue)
-            let usageStr = UsageFormatter.tokenCountString(usage)
-            let remainingStr = UsageFormatter.tokenCountString(remaining)
-            return "\(currentStr) / \(usageStr) (\(remainingStr) remaining)"
-        }
-
-        return nil
-    }
-
     private struct PaceDetail {
         let leftLabel: String
         let rightLabel: String?
         let pacePercent: Double?
         let paceOnTop: Bool
+    }
+
+    private struct CopilotBudgetDetail {
+        let daysLeftText: String
+        let dailyBudgetText: String
+    }
+
+    private static func copilotBudgetDetail(for window: RateWindow, now: Date) -> CopilotBudgetDetail? {
+        guard let daysLeft = UsageFormatter.daysUntilReset(from: window.resetsAt, now: now) else { return nil }
+        return CopilotBudgetDetail(
+            daysLeftText: UsageFormatter.daysLeftString(days: daysLeft),
+            dailyBudgetText: UsageFormatter.dailyBudgetString(
+                remainingPercent: window.remainingPercent,
+                daysLeft: daysLeft))
     }
 
     private static func weeklyPaceDetail(

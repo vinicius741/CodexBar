@@ -182,6 +182,29 @@ public enum UsageFormatter {
         return "\(single[..<idx])…"
     }
 
+    // MARK: - Days Left & Daily Budget
+
+    /// Calculate days remaining until reset date. Returns nil if date is in the past.
+    public static func daysUntilReset(from date: Date?, now: Date = .init()) -> Int? {
+        guard let date else { return nil }
+        let seconds = date.timeIntervalSince(now)
+        guard seconds > 0 else { return nil }
+        let days = Int(ceil(seconds / 86400.0))
+        return max(1, days)
+    }
+
+    /// Format days left string for display.
+    public static func daysLeftString(days: Int) -> String {
+        days == 1 ? "1 day left" : "\(days) days left"
+    }
+
+    /// Format daily budget string.
+    public static func dailyBudgetString(remainingPercent: Double, daysLeft: Int) -> String {
+        guard daysLeft > 0 else { return "0% per day" }
+        let perDay = remainingPercent / Double(daysLeft)
+        return String(format: "%.1f%% per day", perDay)
+    }
+
     public static func modelDisplayName(_ raw: String) -> String {
         var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return raw }
