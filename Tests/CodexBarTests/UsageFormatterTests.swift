@@ -211,18 +211,30 @@ struct UsageFormatterTests {
 
     @Test
     func daysUntilResetReturnsCorrectDays() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let reset = now.addingTimeInterval(5 * 86400 + 3600) // 5 days + 1 hour
+        // Use a proper date in a billing month with reset in next month
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        // Jan 25, 2026 - billing month ends Jan 31
+        let now = cal.date(from: DateComponents(year: 2026, month: 1, day: 25, hour: 12))!
+        // Reset date of Feb 2, 2026
+        let reset = cal.date(from: DateComponents(year: 2026, month: 2, day: 2))!
         let days = UsageFormatter.daysUntilReset(from: reset, now: now)
-        #expect(days == 6) // Ceiling of 5.04 = 6
+        // Jan 31 23:59:59 - Jan 25 12:00 = ~6.5 days → ceil = 7
+        #expect(days == 7)
     }
 
     @Test
     func daysUntilResetReturnsOneDayForSmallRemaining() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let reset = now.addingTimeInterval(3600) // 1 hour
+        // Last day of billing month
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        // Jan 31, 2026 22:00 - just before month end
+        let now = cal.date(from: DateComponents(year: 2026, month: 1, day: 31, hour: 22))!
+        // Reset date of Feb 2, 2026
+        let reset = cal.date(from: DateComponents(year: 2026, month: 2, day: 2))!
         let days = UsageFormatter.daysUntilReset(from: reset, now: now)
-        #expect(days == 1) // Minimum is 1
+        // Jan 31 23:59:59 - Jan 31 22:00 = ~2 hours → ceil = 1 day (minimum)
+        #expect(days == 1)
     }
 
     @Test
@@ -265,5 +277,80 @@ struct UsageFormatterTests {
     func dailyBudgetStringHandlesZeroRemaining() {
         let result = UsageFormatter.dailyBudgetString(remainingPercent: 0, daysLeft: 5)
         #expect(result == "0.0% per day")
+    }
+
+    // MARK: - Month-End Days Left Calculation
+
+    @Test
+    func daysUntilResetHandlesFebruary2026() {
+        // Feb 13, 2026 12:00 UTC - February has 28 days
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 2, day: 13, hour: 12))!
+        // Reset date of March 2, 2026
+        let reset = cal.date(from: DateComponents(year: 2026, month: 3, day: 2))!
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        // Feb 28 23:59:59 - Feb 13 12:00 = ~15.5 days → ceil = 16
+        #expect(days == 16)
+    }
+
+    @Test
+    func daysUntilResetHandlesLeapYearFebruary() {
+        // Feb 13, 2028 (leap year) - February has 29 days
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2028, month: 2, day: 13, hour: 12))!
+        let reset = cal.date(from: DateComponents(year: 2028, month: 3, day: 2))!
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        // Feb 29 23:59:59 - Feb 13 12:00 = ~16.5 days → ceil = 17
+        #expect(days == 17)
+    }
+
+    @Test
+    func daysUntilResetHandles31DayMonth() {
+        // Jan 15, 2026 - January has 31 days
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 1, day: 15, hour: 12))!
+        let reset = cal.date(from: DateComponents(year: 2026, month: 2, day: 2))!
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        // Jan 31 23:59:59 - Jan 15 12:00 = ~16.5 days → ceil = 17
+        #expect(days == 17)
+    }
+
+    @Test
+    func daysUntilResetHandles30DayMonth() {
+        // Apr 10, 2026 - April has 30 days
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 4, day: 10, hour: 12))!
+        let reset = cal.date(from: DateComponents(year: 2026, month: 5, day: 2))!
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        // Apr 30 23:59:59 - Apr 10 12:00 = ~20.5 days → ceil = 21
+        #expect(days == 21)
+    }
+
+    @Test
+    func daysUntilResetHandlesLastDayOfMonth() {
+        // Feb 28, 2026 10:00 UTC - last day of February
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 2, day: 28, hour: 10))!
+        let reset = cal.date(from: DateComponents(year: 2026, month: 3, day: 2))!
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        // Feb 28 23:59:59 - Feb 28 10:00 = ~14 hours → ceil = 1 day
+        #expect(days == 1)
+    }
+
+    @Test
+    func daysUntilResetHandlesFirstDayOfMonth() {
+        // Feb 1, 2026 12:00 UTC - first day of February
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 2, day: 1, hour: 12))!
+        let reset = cal.date(from: DateComponents(year: 2026, month: 3, day: 2))!
+        let days = UsageFormatter.daysUntilReset(from: reset, now: now)
+        // Feb 28 23:59:59 - Feb 1 12:00 = ~27.5 days → ceil = 28
+        #expect(days == 28)
     }
 }

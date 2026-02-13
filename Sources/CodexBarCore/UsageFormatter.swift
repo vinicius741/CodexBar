@@ -184,10 +184,25 @@ public enum UsageFormatter {
 
     // MARK: - Days Left & Daily Budget
 
-    /// Calculate days remaining until reset date. Returns nil if date is in the past.
+    /// Calculate days remaining until the end of the billing month.
+    /// The billing month ends at the last day of the month *before* the reset date.
+    /// This handles cases where the API returns a reset date in early next month
+    /// but the billing period actually ends at the end of the current month.
+    /// Returns nil if date is in the past.
     public static func daysUntilReset(from date: Date?, now: Date = .init()) -> Int? {
         guard let date else { return nil }
-        let seconds = date.timeIntervalSince(now)
+        let calendar = Calendar(identifier: .gregorian)
+
+        // Get start of the reset date's month
+        let components = calendar.dateComponents([.year, .month], from: date)
+        guard let resetMonthStart = calendar.date(from: components),
+              // Go to start of previous month (the billing month)
+              let billingMonthStart = calendar.date(byAdding: .month, value: -1, to: resetMonthStart),
+              // Get last moment of billing month (first of next month minus 1 second)
+              let billingMonthEnd = calendar.date(byAdding: DateComponents(month: 1, second: -1), to: billingMonthStart)
+        else { return nil }
+
+        let seconds = billingMonthEnd.timeIntervalSince(now)
         guard seconds > 0 else { return nil }
         let days = Int(ceil(seconds / 86400.0))
         return max(1, days)
