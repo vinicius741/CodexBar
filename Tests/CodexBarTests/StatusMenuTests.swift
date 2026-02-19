@@ -269,6 +269,49 @@ struct StatusMenuTests {
     }
 
     @Test
+    func trimsAndTruncatesLongStatusIncidentLine() throws {
+        self.disableMenuCardsForTesting()
+        let settings = self.makeSettings()
+        settings.statusChecksEnabled = true
+        settings.refreshFrequency = .manual
+        settings.mergeIcons = false
+
+        let registry = ProviderRegistry.shared
+        for provider in UsageProvider.allCases {
+            guard let metadata = registry.metadata[provider] else { continue }
+            settings.setProviderEnabled(
+                provider: provider,
+                metadata: metadata,
+                enabled: provider == .antigravity)
+        }
+
+        let fetcher = UsageFetcher()
+        let store = UsageStore(fetcher: fetcher, browserDetection: BrowserDetection(cacheTTL: 0), settings: settings)
+
+        store.statuses[.antigravity] = ProviderStatus(
+            indicator: .minor,
+            description: "Title : Some customers may have experienced an issue with Gemini where conversation " +
+                "history may not have been visible.",
+            updatedAt: Date().addingTimeInterval(-3600))
+        let descriptor = MenuDescriptor.build(
+            provider: .antigravity,
+            store: store,
+            settings: settings,
+            account: fetcher.loadAccountInfo(),
+            updateReady: false)
+        let lines: [String] = descriptor.sections.flatMap { section in
+            section.entries.compactMap { entry in
+                guard case let .text(text, _) = entry else { return nil }
+                return text
+            }
+        }
+        let statusLine = try #require(lines.first { $0.contains("Updated") })
+        #expect(!statusLine.contains("Title :"))
+        #expect(statusLine.contains("…"))
+        #expect(statusLine.count <= 90)
+    }
+
+    @Test
     func showsOpenAIWebSubmenusWhenHistoryExists() throws {
         self.disableMenuCardsForTesting()
         let settings = SettingsStore(

@@ -1,6 +1,8 @@
 import AppKit
+import CodexBarCore
 import Foundation
 import Testing
+@testable import CodexBar
 
 @MainActor
 @Suite
@@ -30,6 +32,24 @@ struct ProviderIconResourcesTests {
 
             let image = NSImage(contentsOf: url)
             #expect(image != nil, "Could not load SVG as NSImage for \(slug)")
+        }
+    }
+
+    @Test
+    func providerBrandIconsLoadForSwitcher() {
+        let providers: [UsageProvider] = [
+            .codex,
+            .claude,
+            .gemini,
+            .antigravity,
+            .openrouter,
+            .copilot,
+            .zai,
+        ]
+
+        for provider in providers {
+            let image = ProviderBrandIcon.image(for: provider)
+            #expect(image != nil, "Expected brand icon for \(provider.rawValue)")
         }
     }
 

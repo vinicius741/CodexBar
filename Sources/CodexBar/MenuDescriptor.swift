@@ -3,6 +3,8 @@ import Foundation
 
 @MainActor
 struct MenuDescriptor {
+    private static let maxStatusLineLength = 72
+
     struct Section {
         var entries: [Entry]
     }
@@ -333,12 +335,34 @@ struct MenuDescriptor {
               status.indicator != .none else { return nil }
 
         let description = status.description?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let label = description?.isEmpty == false ? description! : status.indicator.label
+        let rawLabel = description?.isEmpty == false ? description! : status.indicator.label
+        let label = self.normalizedStatusLabel(rawLabel)
+        guard !label.isEmpty else { return nil }
         if let updated = status.updatedAt {
             let freshness = UsageFormatter.updatedString(from: updated)
-            return "\(label) — \(freshness)"
+            let suffix = " — \(freshness)"
+            let maxLabelLength = max(24, self.maxStatusLineLength - suffix.count)
+            let truncatedLabel = UsageFormatter.truncatedSingleLine(label, max: maxLabelLength)
+            return "\(truncatedLabel)\(suffix)"
         }
-        return label
+        return UsageFormatter.truncatedSingleLine(label, max: self.maxStatusLineLength)
+    }
+
+    private static func normalizedStatusLabel(_ text: String) -> String {
+        let compact = text
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !compact.isEmpty else { return "" }
+
+        guard let prefix = compact.range(
+            of: #"^title\s*:\s*"#,
+            options: [.regularExpression, .caseInsensitive])
+        else {
+            return compact
+        }
+
+        let stripped = String(compact[prefix.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? compact : stripped
     }
 
     private static func switchAccountTarget(for provider: UsageProvider?, store: UsageStore) -> MenuAction {
