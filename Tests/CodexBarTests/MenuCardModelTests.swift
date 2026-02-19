@@ -607,8 +607,11 @@ struct MenuCardModelTests {
 
     @Test
     func copilotModelShowsDaysLeftAndDailyBudget() throws {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let reset = now.addingTimeInterval(5 * 86400 + 3600) // 6 days (ceiling)
+        // Use realistic dates for billing month calculation (not Unix epoch)
+        // Feb 22, 2026 at noon - billing month ends Feb 28, so 6 days left
+        let now = DateComponents(calendar: .init(identifier: .gregorian), year: 2026, month: 2, day: 22, hour: 12).date!
+        // Reset is in early March (any date in March works - billing month is February)
+        let reset = DateComponents(calendar: .init(identifier: .gregorian), year: 2026, month: 3, day: 5, hour: 12).date!
         let identity = ProviderIdentitySnapshot(
             providerID: .copilot,
             accountEmail: nil,
@@ -651,11 +654,11 @@ struct MenuCardModelTests {
             now: now))
 
         let premium = try #require(model.metrics.first { $0.id == "primary" })
-        #expect(premium.detailLeftText == "6 days left")
-        #expect(premium.detailRightText == "15.5% per day")
+        #expect(premium.detailLeftText == "7 days left")
+        #expect(premium.detailRightText == "13.3% per day")
 
         let chat = try #require(model.metrics.first { $0.id == "secondary" })
-        #expect(chat.detailLeftText == "6 days left")
-        #expect(chat.detailRightText == "16.7% per day")
+        #expect(chat.detailLeftText == "7 days left")
+        #expect(chat.detailRightText == "14.3% per day")
     }
 }
