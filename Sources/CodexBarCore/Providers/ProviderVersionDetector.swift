@@ -54,7 +54,14 @@ public enum ProviderVersionDetector {
             }
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
+                // Wait for OS to clean up after SIGKILL
+                usleep(50000)
             }
+        }
+
+        // Guard against accessing terminationStatus while process is still running
+        guard !proc.isRunning else {
+            return nil
         }
 
         let data = out.fileHandleForReading.readDataToEndOfFile()
