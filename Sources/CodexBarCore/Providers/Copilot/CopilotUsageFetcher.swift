@@ -35,10 +35,23 @@ public struct CopilotUsageFetcher: Sendable {
         }
 
         let usage = try JSONDecoder().decode(CopilotUsageResponse.self, from: data)
-
         let resetDate = Self.parseResetDate(usage.quotaResetDate)
-        let primary = self.makeRateWindow(from: usage.quotaSnapshots.premiumInteractions, resetsAt: resetDate)
-        let secondary = self.makeRateWindow(from: usage.quotaSnapshots.chat, resetsAt: resetDate)
+        let premium = self.makeRateWindow(from: usage.quotaSnapshots.premiumInteractions, resetsAt: resetDate)
+        let chat = self.makeRateWindow(from: usage.quotaSnapshots.chat, resetsAt: resetDate)
+
+        let primary: RateWindow?
+        let secondary: RateWindow?
+        if let premium {
+            primary = premium
+            secondary = chat
+        } else if let chatWindow = chat {
+            // Keep chat in the secondary slot so provider labels remain accurate
+            // ("Premium" for primary, "Chat" for secondary) on chat-only plans.
+            primary = nil
+            secondary = chatWindow
+        } else {
+            throw URLError(.cannotDecodeRawData)
+        }
 
         let identity = ProviderIdentitySnapshot(
             providerID: .copilot,
@@ -46,7 +59,7 @@ public struct CopilotUsageFetcher: Sendable {
             accountOrganization: nil,
             loginMethod: usage.copilotPlan.capitalized)
         return UsageSnapshot(
-            primary: primary ?? .init(usedPercent: 0, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+            primary: primary,
             secondary: secondary,
             tertiary: nil,
             providerCost: nil,
@@ -94,6 +107,8 @@ public struct CopilotUsageFetcher: Sendable {
 
     private func makeRateWindow(from snapshot: CopilotUsageResponse.QuotaSnapshot?, resetsAt: Date?) -> RateWindow? {
         guard let snapshot else { return nil }
+        guard !snapshot.isPlaceholder else { return nil }
+        guard snapshot.hasPercentRemaining else { return nil }
         // percent_remaining is 0-100 based on the JSON example in the web app source
         let usedPercent = max(0, 100 - snapshot.percentRemaining)
         let resetDescription = resetsAt.map { UsageFormatter.resetDescription(from: $0) }
