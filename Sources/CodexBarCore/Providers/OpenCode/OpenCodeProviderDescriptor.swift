@@ -88,7 +88,7 @@ struct OpenCodeUsageFetchStrategy: ProviderFetchStrategy {
             if let header = CookieHeaderNormalizer.normalize(settings.manualCookieHeader) {
                 let pairs = CookieHeaderNormalizer.pairs(from: header)
                 let hasAuthCookie = pairs.contains { pair in
-                    pair.name == "auth" || pair.name == "__Host-auth"
+                    pair.name == "auth" || pair.name == "__Host-auth" || pair.name == "__Secure-auth"
                 }
                 if hasAuthCookie {
                     return header

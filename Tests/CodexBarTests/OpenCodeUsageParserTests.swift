@@ -23,6 +23,7 @@ struct OpenCodeUsageParserTests {
         #expect(snapshot.weeklyUsagePercent == 75)
         #expect(snapshot.rollingResetInSec == 5944)
         #expect(snapshot.weeklyResetInSec == 278_201)
+        #expect(snapshot.planName == nil)
     }
 
     @Test
@@ -52,6 +53,7 @@ struct OpenCodeUsageParserTests {
         #expect(snapshot.weeklyUsagePercent == 75)
         #expect(snapshot.rollingResetInSec == 3600)
         #expect(snapshot.weeklyResetInSec == 7200)
+        #expect(snapshot.planName == nil)
     }
 
     @Test
@@ -78,6 +80,7 @@ struct OpenCodeUsageParserTests {
         #expect(snapshot.weeklyUsagePercent == 50)
         #expect(snapshot.rollingResetInSec == 300)
         #expect(snapshot.weeklyResetInSec == 1200)
+        #expect(snapshot.planName == nil)
     }
 
     @Test
@@ -102,6 +105,46 @@ struct OpenCodeUsageParserTests {
 
         #expect(snapshot.rollingUsagePercent == 25)
         #expect(snapshot.weeklyUsagePercent == 25)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
+    func parsesGoSubscriptionFromBillingHTML() throws {
+        let text = """
+        <section>
+          <h2>Go Subscription</h2>
+          <p>You are subscribed to OpenCode Go.</p>
+        </section>
+        <script>
+        $R[13]($R[28],$R[46]={mine:!0,useBalance:!1,rollingUsage:$R[47]={status:"ok",resetInSec:4982,usagePercent:6},weeklyUsage:$R[48]={status:"ok",resetInSec:290876,usagePercent:2},monthlyUsage:$R[49]={status:"ok",resetInSec:2665043,usagePercent:1}});
+        </script>
+        """
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 6)
+        #expect(snapshot.weeklyUsagePercent == 2)
+        #expect(snapshot.rollingResetInSec == 4982)
+        #expect(snapshot.weeklyResetInSec == 290_876)
+        #expect(snapshot.planName == "OpenCode Go")
+    }
+
+    @Test
+    func mapsPlanNameToIdentity() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let snapshot = OpenCodeUsageSnapshot(
+            rollingUsagePercent: 10,
+            weeklyUsagePercent: 20,
+            rollingResetInSec: 300,
+            weeklyResetInSec: 900,
+            planName: "OpenCode Go",
+            updatedAt: now)
+
+        let usage = snapshot.toUsageSnapshot()
+
+        #expect(usage.loginMethod(for: .opencode) == "OpenCode Go")
+        #expect(usage.identity?.providerID == .opencode)
     }
 
     @Test

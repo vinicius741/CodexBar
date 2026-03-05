@@ -27,6 +27,7 @@ public struct OpenCodeUsageFetcher: Sendable {
     private static let log = CodexBarLog.logger(LogCategories.opencodeUsage)
     private static let baseURL = URL(string: "https://opencode.ai")!
     private static let serverURL = URL(string: "https://opencode.ai/_server")!
+    private static let maxObjectTraversalDepth = 6
     private static let workspacesServerID = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
     private static let subscriptionServerID = "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4"
     private static let percentKeys = [
@@ -92,11 +93,21 @@ public struct OpenCodeUsageFetcher: Sendable {
                 cookieHeader: cookieHeader,
                 timeout: timeout)
         }
-        let subscriptionText = try await self.fetchSubscriptionInfo(
-            workspaceID: workspaceID,
-            cookieHeader: cookieHeader,
-            timeout: timeout)
-        return try self.parseSubscription(text: subscriptionText, now: now)
+        do {
+            let subscriptionText = try await self.fetchSubscriptionInfo(
+                workspaceID: workspaceID,
+                cookieHeader: cookieHeader,
+                timeout: timeout)
+            return try self.parseSubscription(text: subscriptionText, now: now)
+        } catch let error as OpenCodeUsageError {
+            guard self.shouldFallbackToBilling(after: error) else { throw error }
+            Self.log.warning("OpenCode server usage fetch failed; falling back to billing page parser.")
+            let billingText = try await self.fetchBillingSubscriptionInfo(
+                workspaceID: workspaceID,
+                cookieHeader: cookieHeader,
+                timeout: timeout)
+            return try self.parseSubscription(text: billingText, now: now)
+        }
     }
 
     private static func fetchWorkspaceID(
@@ -191,6 +202,48 @@ public struct OpenCodeUsageFetcher: Sendable {
         return text
     }
 
+    private static func fetchBillingSubscriptionInfo(
+        workspaceID: String,
+        cookieHeader: String,
+        timeout: TimeInterval) async throws -> String
+    {
+        let url = URL(string: "https://opencode.ai/workspace/\(workspaceID)/billing") ?? self.baseURL
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = timeout
+        request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        request.setValue(self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(self.baseURL.absoluteString, forHTTPHeaderField: "Origin")
+        request.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenCodeUsageError.networkError("Invalid response")
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw OpenCodeUsageError.parseFailed("Response was not UTF-8.")
+        }
+
+        if self.looksSignedOut(text: text) {
+            throw OpenCodeUsageError.invalidCredentials
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+            Self.log.error("OpenCode billing returned \(httpResponse.statusCode) (type=\(contentType) length=\(data.count))")
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                throw OpenCodeUsageError.invalidCredentials
+            }
+            if let message = self.extractServerErrorMessage(from: text) {
+                throw OpenCodeUsageError.apiError("HTTP \(httpResponse.statusCode): \(message)")
+            }
+            throw OpenCodeUsageError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+
+        return text
+    }
+
     private static func isExplicitNullPayload(text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.caseInsensitiveCompare("null") == .orderedSame {
@@ -208,6 +261,169 @@ public struct OpenCodeUsageFetcher: Sendable {
         OpenCodeUsageError.apiError(
             "No subscription usage data was returned for workspace \(workspaceID). " +
                 "This usually means this workspace does not have OpenCode Black usage data.")
+    }
+
+    private static func shouldFallbackToBilling(after error: OpenCodeUsageError) -> Bool {
+        switch error {
+        case .invalidCredentials:
+            return false
+        case .networkError, .apiError, .parseFailed:
+            return true
+        }
+    }
+
+    private static func withPlanName(_ snapshot: OpenCodeUsageSnapshot, planName: String?) -> OpenCodeUsageSnapshot {
+        let resolvedPlan = self.normalizePlanName(planName)
+        return OpenCodeUsageSnapshot(
+            rollingUsagePercent: snapshot.rollingUsagePercent,
+            weeklyUsagePercent: snapshot.weeklyUsagePercent,
+            rollingResetInSec: snapshot.rollingResetInSec,
+            weeklyResetInSec: snapshot.weeklyResetInSec,
+            planName: resolvedPlan,
+            updatedAt: snapshot.updatedAt)
+    }
+
+    private static func extractPlanName(object: Any, text: String) -> String? {
+        if let fromText = self.extractPlanName(text: text) {
+            return fromText
+        }
+        if self.containsLiteMarker(object: object, depth: 0) {
+            return "OpenCode Go"
+        }
+        if let value = self.findFirstStringValue(
+            object: object,
+            keys: ["subscriptionplan", "planname", "plan"],
+            depth: 0)
+        {
+            return self.normalizePlanName(value)
+        }
+        return nil
+    }
+
+    private static func extractPlanName(text: String) -> String? {
+        if text.range(of: #"(?i)\bsubscribed to\s+OpenCode\s+Go\b"#, options: .regularExpression) != nil {
+            return "OpenCode Go"
+        }
+        if text.range(of: #"(?i)>\s*Go Subscription\s*<"#, options: .regularExpression) != nil {
+            return "OpenCode Go"
+        }
+        if text.range(
+            of: #"(?i)(^|[^A-Za-z])liteSubscriptionID([^A-Za-z]|$)\s*[:=]"#,
+            options: .regularExpression)
+            != nil
+        {
+            return "OpenCode Go"
+        }
+        if let subscriptionPlan = self.extractFirst(
+            pattern: #"(?i)subscriptionPlan\s*[:=]\s*"([^"]+)""#,
+            text: text)
+        {
+            return self.normalizePlanName(subscriptionPlan)
+        }
+        if let sentencePlan = self.extractFirst(
+            pattern: #"(?i)You are subscribed to\s+([^.<]+)"#,
+            text: text)
+        {
+            return self.normalizePlanName(sentencePlan)
+        }
+        return nil
+    }
+
+    private static func normalizePlanName(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        var cleaned = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,:;"))
+        guard !cleaned.isEmpty else { return nil }
+
+        if cleaned.lowercased().hasSuffix(" subscription") {
+            cleaned = String(cleaned.dropLast(" subscription".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !cleaned.isEmpty else { return nil }
+
+        let lower = cleaned.lowercased()
+        if lower == "go" || lower == "lite" || lower == "opencode go" {
+            return "OpenCode Go"
+        }
+        if lower == "black" || lower == "opencode black" {
+            return "OpenCode Black"
+        }
+        if lower.contains("opencode go") {
+            return "OpenCode Go"
+        }
+        if lower.contains("opencode black") {
+            return "OpenCode Black"
+        }
+        return cleaned
+    }
+
+    private static func containsLiteMarker(object: Any, depth: Int) -> Bool {
+        if depth > self.maxObjectTraversalDepth { return false }
+        if let dict = object as? [String: Any] {
+            for (rawKey, value) in dict {
+                let key = rawKey.lowercased()
+                if key == "litesubscriptionid",
+                   let subscriptionID = value as? String,
+                   subscriptionID.hasPrefix("sub_")
+                {
+                    return true
+                }
+                if key == "lite", !(value is NSNull) {
+                    return true
+                }
+                if key == "enrichment",
+                   let enrichment = value as? [String: Any],
+                   let type = enrichment["type"] as? String,
+                   type.lowercased() == "lite"
+                {
+                    return true
+                }
+                if self.containsLiteMarker(object: value, depth: depth + 1) {
+                    return true
+                }
+            }
+            return false
+        }
+        if let array = object as? [Any] {
+            for value in array where self.containsLiteMarker(object: value, depth: depth + 1) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func findFirstStringValue(
+        object: Any,
+        keys: Set<String>,
+        depth: Int) -> String?
+    {
+        if depth > self.maxObjectTraversalDepth { return nil }
+        if let dict = object as? [String: Any] {
+            for (rawKey, value) in dict {
+                let key = rawKey.lowercased()
+                if keys.contains(key),
+                   let string = value as? String,
+                   !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return string
+                }
+            }
+            for value in dict.values {
+                if let nested = self.findFirstStringValue(object: value, keys: keys, depth: depth + 1) {
+                    return nested
+                }
+            }
+            return nil
+        }
+        if let array = object as? [Any] {
+            for value in array {
+                if let nested = self.findFirstStringValue(object: value, keys: keys, depth: depth + 1) {
+                    return nested
+                }
+            }
+        }
+        return nil
     }
 
     private static func normalizeWorkspaceID(_ raw: String?) -> String? {
@@ -292,6 +508,8 @@ public struct OpenCodeUsageFetcher: Sendable {
             return snapshot
         }
 
+        let planName = self.extractPlanName(text: text)
+
         guard let rollingPercent = self.extractDouble(
             pattern: #"rollingUsage[^}]*?usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)"#,
             text: text),
@@ -314,6 +532,7 @@ public struct OpenCodeUsageFetcher: Sendable {
             weeklyUsagePercent: weeklyPercent,
             rollingResetInSec: rollingReset,
             weeklyResetInSec: weeklyReset,
+            planName: planName,
             updatedAt: now)
     }
 
@@ -324,12 +543,14 @@ public struct OpenCodeUsageFetcher: Sendable {
             return nil
         }
 
+        let planName = self.extractPlanName(object: object, text: text)
+
         if let snapshot = self.parseUsageJSON(object: object, now: now) {
-            return snapshot
+            return self.withPlanName(snapshot, planName: planName)
         }
 
         if let snapshot = self.parseUsageFromCandidates(object: object, now: now) {
-            return snapshot
+            return self.withPlanName(snapshot, planName: planName)
         }
 
         self.logParseSummary(object: object)
@@ -398,6 +619,17 @@ public struct OpenCodeUsageFetcher: Sendable {
             return nil
         }
         return Int(text[range])
+    }
+
+    private static func extractFirst(pattern: String, text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
+        let nsrange = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: nsrange),
+              let range = Range(match.range(at: 1), in: text)
+        else {
+            return nil
+        }
+        return String(text[range])
     }
 
     private static func doubleValue(from value: Any?) -> Double? {
@@ -578,6 +810,7 @@ public struct OpenCodeUsageFetcher: Sendable {
             weeklyUsagePercent: weekly.percent,
             rollingResetInSec: rolling.resetInSec,
             weeklyResetInSec: weekly.resetInSec,
+            planName: nil,
             updatedAt: now)
     }
 
@@ -669,6 +902,7 @@ public struct OpenCodeUsageFetcher: Sendable {
             weeklyUsagePercent: weeklyWindow.percent,
             rollingResetInSec: rollingWindow.resetInSec,
             weeklyResetInSec: weeklyWindow.resetInSec,
+            planName: nil,
             updatedAt: now)
     }
 

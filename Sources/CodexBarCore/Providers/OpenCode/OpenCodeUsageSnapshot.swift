@@ -5,6 +5,7 @@ public struct OpenCodeUsageSnapshot: Sendable {
     public let weeklyUsagePercent: Double
     public let rollingResetInSec: Int
     public let weeklyResetInSec: Int
+    public let planName: String?
     public let updatedAt: Date
 
     public init(
@@ -12,18 +13,33 @@ public struct OpenCodeUsageSnapshot: Sendable {
         weeklyUsagePercent: Double,
         rollingResetInSec: Int,
         weeklyResetInSec: Int,
+        planName: String? = nil,
         updatedAt: Date)
     {
         self.rollingUsagePercent = rollingUsagePercent
         self.weeklyUsagePercent = weeklyUsagePercent
         self.rollingResetInSec = rollingResetInSec
         self.weeklyResetInSec = weeklyResetInSec
+        self.planName = planName
         self.updatedAt = updatedAt
     }
 
     public func toUsageSnapshot() -> UsageSnapshot {
         let rollingReset = self.updatedAt.addingTimeInterval(TimeInterval(self.rollingResetInSec))
         let weeklyReset = self.updatedAt.addingTimeInterval(TimeInterval(self.weeklyResetInSec))
+        let normalizedPlan = self.planName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Existing provider convention: expose subscription tier via `loginMethod` so shared UI renders "Plan".
+        let loginMethod = (normalizedPlan?.isEmpty ?? true) ? nil : normalizedPlan
+        let identity: ProviderIdentitySnapshot? = if let loginMethod {
+            ProviderIdentitySnapshot(
+                providerID: .opencode,
+                accountEmail: nil,
+                accountOrganization: nil,
+                loginMethod: loginMethod)
+        } else {
+            nil
+        }
 
         let primary = RateWindow(
             usedPercent: self.rollingUsagePercent,
@@ -40,6 +56,6 @@ public struct OpenCodeUsageSnapshot: Sendable {
             primary: primary,
             secondary: secondary,
             updatedAt: self.updatedAt,
-            identity: nil)
+            identity: identity)
     }
 }
