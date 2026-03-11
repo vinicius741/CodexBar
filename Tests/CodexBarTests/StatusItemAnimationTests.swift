@@ -369,28 +369,23 @@ struct StatusItemAnimationTests {
             windowMinutes: 10080,
             resetsAt: now.addingTimeInterval(60 * 60 * 24 * 6),
             resetDescription: nil)
+        let paceValue = UsagePace.weekly(window: paceWindow, now: now, defaultWindowMinutes: 10080)
 
         let percent = MenuBarDisplayText.displayText(
             mode: .percent,
-            provider: .codex,
             percentWindow: percentWindow,
-            paceWindow: paceWindow,
-            showUsed: true,
-            now: now)
+            pace: paceValue,
+            showUsed: true)
         let pace = MenuBarDisplayText.displayText(
             mode: .pace,
-            provider: .codex,
             percentWindow: percentWindow,
-            paceWindow: paceWindow,
-            showUsed: true,
-            now: now)
+            pace: paceValue,
+            showUsed: true)
         let both = MenuBarDisplayText.displayText(
             mode: .both,
-            provider: .codex,
             percentWindow: percentWindow,
-            paceWindow: paceWindow,
-            showUsed: true,
-            now: now)
+            pace: paceValue,
+            showUsed: true)
 
         #expect(percent == "40%")
         #expect(pace == "+16%")
@@ -409,18 +404,37 @@ struct StatusItemAnimationTests {
 
         let pace = MenuBarDisplayText.displayText(
             mode: .pace,
-            provider: .gemini,
             percentWindow: percentWindow,
-            paceWindow: paceWindow,
-            showUsed: true,
-            now: now)
+            showUsed: true)
         let both = MenuBarDisplayText.displayText(
             mode: .both,
-            provider: .gemini,
             percentWindow: percentWindow,
-            paceWindow: paceWindow,
-            showUsed: true,
-            now: now)
+            showUsed: true)
+
+        #expect(pace == nil)
+        #expect(both == nil)
+    }
+
+    @Test
+    func menuBarDisplayTextRequiresProvidedPaceForCodex() {
+        let now = Date(timeIntervalSince1970: 0)
+        let percentWindow = RateWindow(usedPercent: 40, windowMinutes: nil, resetsAt: nil, resetDescription: nil)
+        let paceWindow = RateWindow(
+            usedPercent: 30,
+            windowMinutes: 10080,
+            resetsAt: now.addingTimeInterval(60 * 60 * 24 * 6),
+            resetDescription: nil)
+
+        let pace = MenuBarDisplayText.displayText(
+            mode: .pace,
+            percentWindow: percentWindow,
+            pace: nil,
+            showUsed: true)
+        let both = MenuBarDisplayText.displayText(
+            mode: .both,
+            percentWindow: percentWindow,
+            pace: nil,
+            showUsed: true)
 
         #expect(pace == nil)
         #expect(both == nil)
@@ -516,6 +530,52 @@ struct StatusItemAnimationTests {
             .replacingOccurrences(of: " left", with: "")
 
         #expect(displayText == expected)
+    }
+
+    @Test
+    func menuBarDisplayTextShowsZeroPercentForKiloZeroTotalEdge() {
+        let settings = SettingsStore(
+            configStore: testConfigStore(suiteName: "StatusItemAnimationTests-kilo-zero-edge"),
+            zaiTokenStore: NoopZaiTokenStore(),
+            syntheticTokenStore: NoopSyntheticTokenStore())
+        settings.statusChecksEnabled = false
+        settings.refreshFrequency = .manual
+        settings.mergeIcons = true
+        settings.selectedMenuProvider = .kilo
+        settings.menuBarDisplayMode = .percent
+        settings.usageBarsShowUsed = false
+        settings.setMenuBarMetricPreference(.primary, for: .kilo)
+
+        let registry = ProviderRegistry.shared
+        if let kiloMeta = registry.metadata[.kilo] {
+            settings.setProviderEnabled(provider: .kilo, metadata: kiloMeta, enabled: true)
+        }
+
+        let fetcher = UsageFetcher()
+        let store = UsageStore(fetcher: fetcher, browserDetection: BrowserDetection(cacheTTL: 0), settings: settings)
+        let controller = StatusItemController(
+            store: store,
+            settings: settings,
+            account: fetcher.loadAccountInfo(),
+            updater: DisabledUpdaterController(),
+            preferencesSelection: PreferencesSelection(),
+            statusBar: self.makeStatusBarForTesting())
+
+        let snapshot = KiloUsageSnapshot(
+            creditsUsed: 0,
+            creditsTotal: 0,
+            creditsRemaining: 0,
+            planName: "Kilo Pass Pro",
+            autoTopUpEnabled: true,
+            autoTopUpMethod: "visa",
+            updatedAt: Date()).toUsageSnapshot()
+
+        store._setSnapshotForTesting(snapshot, provider: .kilo)
+        store._setErrorForTesting(nil, provider: .kilo)
+
+        let displayText = controller.menuBarDisplayText(for: .kilo, snapshot: snapshot)
+
+        #expect(displayText == "0%")
     }
 
     @Test
