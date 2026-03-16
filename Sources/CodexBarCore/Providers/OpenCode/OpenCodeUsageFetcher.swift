@@ -814,7 +814,7 @@ public struct OpenCodeUsageFetcher: Sendable {
             updatedAt: now)
     }
 
-    private struct WindowCandidate: Sendable {
+    private struct WindowCandidate {
         let id: UUID
         let percent: Double
         let resetInSec: Int

@@ -5,7 +5,7 @@ import Testing
 @Suite(.serialized)
 struct OpenCodeUsageFetcherErrorTests {
     @Test
-    func extractsApiErrorFromUppercaseHTMLTitle() async throws {
+    func `extracts api error from uppercase HTML title`() async throws {
         let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
         defer {
             if registered {
@@ -38,7 +38,7 @@ struct OpenCodeUsageFetcherErrorTests {
     }
 
     @Test
-    func extractsApiErrorFromDetailField() async throws {
+    func `extracts api error from detail field`() async throws {
         let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
         defer {
             if registered {
@@ -71,7 +71,7 @@ struct OpenCodeUsageFetcherErrorTests {
     }
 
     @Test
-    func subscriptionGetNullFallsBackToBillingGet() async throws {
+    func `subscription get null skips post and returns graceful error`() async throws {
         let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
         defer {
             if registered {
@@ -230,7 +230,7 @@ struct OpenCodeUsageFetcherErrorTests {
     }
 
     @Test
-    func subscriptionGetPayloadDoesNotFallbackToPost() async throws {
+    func `subscription get payload does not fallback to post`() async throws {
         let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
         defer {
             if registered {
@@ -264,7 +264,7 @@ struct OpenCodeUsageFetcherErrorTests {
     }
 
     @Test
-    func subscriptionGetMissingFieldsFallsBackToPost() async throws {
+    func `subscription get missing fields falls back to post`() async throws {
         let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
         defer {
             if registered {

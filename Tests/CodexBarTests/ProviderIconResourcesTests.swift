@@ -5,10 +5,9 @@ import Testing
 @testable import CodexBar
 
 @MainActor
-@Suite
 struct ProviderIconResourcesTests {
     @Test
-    func providerIconSVGsExist() throws {
+    func `provider icon SV gs exist`() throws {
         let root = try Self.repoRoot()
         let resources = root.appending(path: "Sources/CodexBar/Resources", directoryHint: .isDirectory)
 
