@@ -108,6 +108,156 @@ struct OpenCodeUsageParserTests {
     }
 
     @Test
+    func `computes usage percent from remaining`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Test remaining percentage (should convert to used)
+        let payload: [String: Any] = [
+            "rollingUsage": [
+                "remainingPercent": 75, // 75% remaining = 25% used
+                "resetInSec": 600,
+            ],
+            "weeklyUsage": [
+                "leftPercent": 80, // 80% left = 20% used
+                "resetInSec": 3600,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 25)
+        #expect(snapshot.weeklyUsagePercent == 20)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
+    func `computes usage percent from remaining and limit`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Test remaining/limit calculation
+        let payload: [String: Any] = [
+            "rollingUsage": [
+                "remaining": 75,
+                "limit": 100, // 75 remaining out of 100 = 25% used
+                "resetInSec": 600,
+            ],
+            "weeklyUsage": [
+                "left": 160,
+                "limit": 200, // 160 left out of 200 = 20% used
+                "resetInSec": 3600,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 25)
+        #expect(snapshot.weeklyUsagePercent == 20)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
+    func `parses alternative key names`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Test alternative key names for rolling/weekly
+        let payload: [String: Any] = [
+            "session": [
+                "usagePercent": 30,
+                "resetInSec": 600,
+            ],
+            "quota": [
+                "usagePercent": 40,
+                "resetInSec": 3600,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 30)
+        #expect(snapshot.weeklyUsagePercent == 40)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
+    func `computes usage from remaining with total key`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Test using "total" instead of "limit"
+        let payload: [String: Any] = [
+            "rollingUsage": [
+                "remaining": 30,
+                "total": 100, // 30 remaining out of 100 = 70% used
+                "resetInSec": 600,
+            ],
+            "weeklyUsage": [
+                "left": 50,
+                "max": 200, // 50 left out of 200 = 75% used
+                "resetInSec": 3600,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 70)
+        #expect(snapshot.weeklyUsagePercent == 75)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
+    func `parses ttl reset keys`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Test TTL-based reset keys
+        let payload: [String: Any] = [
+            "rollingUsage": [
+                "usagePercent": 50,
+                "ttl": 300, // 300 seconds
+            ],
+            "weeklyUsage": [
+                "usagePercent": 60,
+                "ttlSeconds": 7200, // 2 hours
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 50)
+        #expect(snapshot.rollingResetInSec == 300)
+        #expect(snapshot.weeklyUsagePercent == 60)
+        #expect(snapshot.weeklyResetInSec == 7200)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
+    func `handles edge cases for remaining percent`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        // Test edge cases: 0% remaining (100% used) and 100% remaining (0% used)
+        let payload: [String: Any] = [
+            "rollingUsage": [
+                "remainingPercent": 0, // 0% remaining = 100% used
+                "resetInSec": 600,
+            ],
+            "weeklyUsage": [
+                "remainingPercent": 100, // 100% remaining = 0% used
+                "resetInSec": 3600,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        let snapshot = try OpenCodeUsageFetcher.parseSubscription(text: text, now: now)
+
+        #expect(snapshot.rollingUsagePercent == 100)
+        #expect(snapshot.weeklyUsagePercent == 0)
+        #expect(snapshot.planName == nil)
+    }
+
+    @Test
     func parsesGoSubscriptionFromBillingHTML() throws {
         let text = """
         <section>

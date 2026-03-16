@@ -42,6 +42,26 @@ public struct OpenCodeUsageFetcher: Sendable {
         "utilization_percent",
         "usage",
     ]
+    private static let remainingPercentKeys = [
+        "remainingPercent",
+        "remaining_percent",
+        "leftPercent",
+        "left_percent",
+    ]
+    private static let remainingAbsoluteKeys = [
+        "remaining",
+        "left",
+        "remainingTokens",
+        "tokensLeft",
+    ]
+    private static let limitKeys = [
+        "limit",
+        "total",
+        "quota",
+        "max",
+        "cap",
+        "tokenLimit",
+    ]
     private static let resetInKeys = [
         "resetInSec",
         "resetInSeconds",
@@ -52,6 +72,11 @@ public struct OpenCodeUsageFetcher: Sendable {
         "resetsInSeconds",
         "resetIn",
         "resetSec",
+        "secondsUntilReset",
+        "seconds_until_reset",
+        "ttl",
+        "ttlSeconds",
+        "ttl_seconds",
     ]
     private static let resetAtKeys = [
         "resetAt",
@@ -62,6 +87,11 @@ public struct OpenCodeUsageFetcher: Sendable {
         "next_reset",
         "renewAt",
         "renew_at",
+        "resetTime",
+        "reset_time",
+        "resetsAtTime",
+        "expiresAt",
+        "expires_at",
     ]
     private static func makeISO8601Formatter() -> ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()
@@ -733,8 +763,17 @@ public struct OpenCodeUsageFetcher: Sendable {
             return snapshot
         }
 
-        let rollingKeys = ["rollingUsage", "rolling", "rolling_usage", "rollingWindow", "rolling_window"]
-        let weeklyKeys = ["weeklyUsage", "weekly", "weekly_usage", "weeklyWindow", "weekly_window"]
+        let rollingKeys = [
+            "rollingUsage", "rolling", "rolling_usage", "rollingWindow", "rolling_window",
+            "rateLimit", "rate_limit", "session", "sessionUsage", "session_usage",
+            "hourly", "hourlyUsage", "hourly_usage", "fiveHour", "five_hour",
+            "shortTerm", "short_term", "primary", "primaryUsage",
+        ]
+        let weeklyKeys = [
+            "weeklyUsage", "weekly", "weekly_usage", "weeklyWindow", "weekly_window",
+            "quota", "quotaUsage", "quota_usage", "monthly", "monthlyUsage", "monthly_usage",
+            "longTerm", "long_term", "secondary", "secondaryUsage",
+        ]
 
         let rolling = rollingKeys.compactMap { dict[$0] as? [String: Any] }.first
         let weekly = weeklyKeys.compactMap { dict[$0] as? [String: Any] }.first
@@ -754,9 +793,14 @@ public struct OpenCodeUsageFetcher: Sendable {
         for (key, value) in dict {
             guard let sub = value as? [String: Any] else { continue }
             let lower = key.lowercased()
-            if lower.contains("rolling") {
+            if lower.contains("rolling") || lower.contains("session") || lower.contains("hourly") ||
+               lower.contains("rate_limit") || lower.contains("ratelimit") || lower.contains("short") ||
+               lower.contains("5h") || lower.contains("five_hour")
+            {
                 rolling = sub
-            } else if lower.contains("weekly") || lower.contains("week") {
+            } else if lower.contains("weekly") || lower.contains("week") || lower.contains("quota") ||
+                      lower.contains("monthly") || lower.contains("long") || lower.contains("secondary")
+            {
                 weekly = sub
             }
         }
@@ -786,11 +830,20 @@ public struct OpenCodeUsageFetcher: Sendable {
             candidate.pathLower.contains("rolling") ||
                 candidate.pathLower.contains("hour") ||
                 candidate.pathLower.contains("5h") ||
-                candidate.pathLower.contains("5-hour")
+                candidate.pathLower.contains("5-hour") ||
+                candidate.pathLower.contains("session") ||
+                candidate.pathLower.contains("rate_limit") ||
+                candidate.pathLower.contains("ratelimit") ||
+                candidate.pathLower.contains("short") ||
+                candidate.pathLower.contains("primary")
         }
         let weeklyCandidates = candidates.filter { candidate in
             candidate.pathLower.contains("weekly") ||
-                candidate.pathLower.contains("week")
+                candidate.pathLower.contains("week") ||
+                candidate.pathLower.contains("quota") ||
+                candidate.pathLower.contains("monthly") ||
+                candidate.pathLower.contains("long") ||
+                candidate.pathLower.contains("secondary")
         }
 
         let rolling = self.pickCandidate(
@@ -908,6 +961,13 @@ public struct OpenCodeUsageFetcher: Sendable {
 
     private static func parseWindow(_ dict: [String: Any], now: Date) -> (percent: Double, resetInSec: Int)? {
         var percent = self.doubleValue(from: dict, keys: self.percentKeys)
+        var isRemaining = false
+
+        // Check for remaining/left percentage (inverse of usage)
+        if percent == nil {
+            percent = self.doubleValue(from: dict, keys: Self.remainingPercentKeys)
+            isRemaining = percent != nil
+        }
 
         if percent == nil {
             let used = self.doubleValue(from: dict, keys: ["used", "usage", "consumed", "count", "usedTokens"])
@@ -917,9 +977,23 @@ public struct OpenCodeUsageFetcher: Sendable {
             }
         }
 
+        // If still no percent, try remaining/limit calculation
+        if percent == nil {
+            let remaining = self.doubleValue(from: dict, keys: Self.remainingAbsoluteKeys)
+            let limit = self.doubleValue(from: dict, keys: Self.limitKeys)
+            if let remaining, let limit, limit > 0 {
+                percent = 100.0 - (remaining / limit) * 100
+                isRemaining = false // Already converted to used percent
+            }
+        }
+
         guard var resolvedPercent = percent else { return nil }
         if resolvedPercent <= 1.0, resolvedPercent >= 0 {
             resolvedPercent *= 100
+        }
+        // Convert remaining to used percentage
+        if isRemaining {
+            resolvedPercent = 100.0 - resolvedPercent
         }
         resolvedPercent = max(0, min(100, resolvedPercent))
 
