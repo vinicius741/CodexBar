@@ -114,13 +114,15 @@ struct OpenCodeUsageFetcherErrorTests {
             }
         }
 
-        #expect(methods == ["GET", "GET"])
+        #expect(methods == ["GET", "GET", "GET"])
         #expect(queries[0].contains("id="))
         #expect(queries[0].contains("wrk_TEST123"))
         #expect(urls[0].path == "/_server")
         #expect(contentTypes[0].isEmpty)
-        #expect(urls[1].path == "/workspace/wrk_TEST123/billing")
+        #expect(urls[1].path == "/workspace/wrk_TEST123/go")
         #expect(contentTypes[1].isEmpty)
+        #expect(urls[2].path == "/workspace/wrk_TEST123/billing")
+        #expect(contentTypes[2].isEmpty)
     }
 
     @Test
@@ -193,6 +195,14 @@ struct OpenCodeUsageFetcherErrorTests {
                     contentType: "application/json")
             }
 
+            if url.path == "/workspace/wrk_TEST123/go" {
+                return Self.makeResponse(
+                    url: url,
+                    body: #"{"status":404,"message":"not found"}"#,
+                    statusCode: 404,
+                    contentType: "application/json")
+            }
+
             if url.path == "/workspace/wrk_TEST123/billing" {
                 let body = """
                 <h2>Go Subscription</h2>
@@ -226,7 +236,78 @@ struct OpenCodeUsageFetcherErrorTests {
         #expect(snapshot.rollingResetInSec == 111)
         #expect(snapshot.weeklyResetInSec == 222)
         #expect(snapshot.planName == "OpenCode Go")
-        #expect(methodsByPath == ["GET /_server", "GET /workspace/wrk_TEST123/billing"])
+        #expect(methodsByPath == [
+            "GET /_server",
+            "GET /workspace/wrk_TEST123/go",
+            "GET /workspace/wrk_TEST123/billing",
+        ])
+    }
+
+    @Test
+    func subscriptionNullFallsBackToGoParser() async throws {
+        let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
+        defer {
+            if registered {
+                URLProtocol.unregisterClass(OpenCodeStubURLProtocol.self)
+            }
+            OpenCodeStubURLProtocol.handler = nil
+        }
+
+        var methodsByPath: [String] = []
+        OpenCodeStubURLProtocol.handler = { request in
+            guard let url = request.url else { throw URLError(.badURL) }
+            methodsByPath.append("\(request.httpMethod ?? "GET") \(url.path)")
+
+            if url.path == "/_server" {
+                let query = url.query ?? ""
+                if query.contains("id=7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4") {
+                    return Self.makeResponse(
+                        url: url,
+                        body: "null",
+                        statusCode: 200,
+                        contentType: "text/javascript")
+                }
+                return Self.makeResponse(
+                    url: url,
+                    body: #"{"status":500,"message":"unexpected id"}"#,
+                    statusCode: 500,
+                    contentType: "application/json")
+            }
+
+            if url.path == "/workspace/wrk_TEST123/go" {
+                let body = """
+                <p>You are subscribed to OpenCode Go.</p>
+                <script>
+                rollingUsage:$R[47]={status:"ok",resetInSec:333,usagePercent:12},
+                weeklyUsage:$R[48]={status:"ok",resetInSec:444,usagePercent:7},
+                monthlyUsage:$R[49]={status:"ok",resetInSec:555,usagePercent:3}
+                </script>
+                """
+                return Self.makeResponse(
+                    url: url,
+                    body: body,
+                    statusCode: 200,
+                    contentType: "text/html")
+            }
+
+            return Self.makeResponse(
+                url: url,
+                body: #"{"status":404,"message":"not found"}"#,
+                statusCode: 404,
+                contentType: "application/json")
+        }
+
+        let snapshot = try await OpenCodeUsageFetcher.fetchUsage(
+            cookieHeader: "auth=test",
+            timeout: 2,
+            workspaceIDOverride: "wrk_TEST123")
+
+        #expect(snapshot.rollingUsagePercent == 12)
+        #expect(snapshot.weeklyUsagePercent == 7)
+        #expect(snapshot.rollingResetInSec == 333)
+        #expect(snapshot.weeklyResetInSec == 444)
+        #expect(snapshot.planName == "OpenCode Go")
+        #expect(methodsByPath == ["GET /_server", "GET /workspace/wrk_TEST123/go"])
     }
 
     @Test

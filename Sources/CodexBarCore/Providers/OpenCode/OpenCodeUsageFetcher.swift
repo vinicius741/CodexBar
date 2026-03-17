@@ -110,6 +110,29 @@ public struct OpenCodeUsageFetcher: Sendable {
         let referer: URL
     }
 
+    private enum WorkspacePageFallback: CaseIterable {
+        case go
+        case billing
+
+        var pathComponent: String {
+            switch self {
+            case .go:
+                "go"
+            case .billing:
+                "billing"
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .go:
+                "Go"
+            case .billing:
+                "billing"
+            }
+        }
+    }
+
     public static func fetchUsage(
         cookieHeader: String,
         timeout: TimeInterval,
@@ -131,12 +154,12 @@ public struct OpenCodeUsageFetcher: Sendable {
             return try self.parseSubscription(text: subscriptionText, now: now)
         } catch let error as OpenCodeUsageError {
             guard self.shouldFallbackToBilling(after: error) else { throw error }
-            Self.log.warning("OpenCode server usage fetch failed; falling back to billing page parser.")
-            let billingText = try await self.fetchBillingSubscriptionInfo(
+            Self.log.warning("OpenCode server usage fetch failed; falling back to workspace page parser.")
+            return try await self.fetchFallbackSubscriptionSnapshot(
                 workspaceID: workspaceID,
                 cookieHeader: cookieHeader,
-                timeout: timeout)
-            return try self.parseSubscription(text: billingText, now: now)
+                timeout: timeout,
+                now: now)
         }
     }
 
@@ -232,12 +255,41 @@ public struct OpenCodeUsageFetcher: Sendable {
         return text
     }
 
-    private static func fetchBillingSubscriptionInfo(
+    private static func fetchFallbackSubscriptionSnapshot(
         workspaceID: String,
+        cookieHeader: String,
+        timeout: TimeInterval,
+        now: Date) async throws -> OpenCodeUsageSnapshot
+    {
+        var lastError: OpenCodeUsageError?
+
+        for page in WorkspacePageFallback.allCases {
+            do {
+                let text = try await self.fetchWorkspacePage(
+                    workspaceID: workspaceID,
+                    page: page,
+                    cookieHeader: cookieHeader,
+                    timeout: timeout)
+                return try self.parseSubscription(text: text, now: now)
+            } catch let error as OpenCodeUsageError {
+                if case .invalidCredentials = error {
+                    throw error
+                }
+                lastError = error
+                Self.log.warning("OpenCode \(page.label) page parser failed: \(error.localizedDescription)")
+            }
+        }
+
+        throw lastError ?? OpenCodeUsageError.parseFailed("Missing usage fields.")
+    }
+
+    private static func fetchWorkspacePage(
+        workspaceID: String,
+        page: WorkspacePageFallback,
         cookieHeader: String,
         timeout: TimeInterval) async throws -> String
     {
-        let url = URL(string: "https://opencode.ai/workspace/\(workspaceID)/billing") ?? self.baseURL
+        let url = URL(string: "https://opencode.ai/workspace/\(workspaceID)/\(page.pathComponent)") ?? self.baseURL
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = timeout
@@ -245,7 +297,9 @@ public struct OpenCodeUsageFetcher: Sendable {
         request.setValue(self.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(self.baseURL.absoluteString, forHTTPHeaderField: "Origin")
         request.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            forHTTPHeaderField: "Accept")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -261,7 +315,8 @@ public struct OpenCodeUsageFetcher: Sendable {
 
         guard httpResponse.statusCode == 200 else {
             let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
-            Self.log.error("OpenCode billing returned \(httpResponse.statusCode) (type=\(contentType) length=\(data.count))")
+            Self.log.error(
+                "OpenCode \(page.label) page returned \(httpResponse.statusCode) (type=\(contentType) length=\(data.count))")
             if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                 throw OpenCodeUsageError.invalidCredentials
             }
@@ -296,9 +351,9 @@ public struct OpenCodeUsageFetcher: Sendable {
     private static func shouldFallbackToBilling(after error: OpenCodeUsageError) -> Bool {
         switch error {
         case .invalidCredentials:
-            return false
+            false
         case .networkError, .apiError, .parseFailed:
-            return true
+            true
         }
     }
 
@@ -794,12 +849,12 @@ public struct OpenCodeUsageFetcher: Sendable {
             guard let sub = value as? [String: Any] else { continue }
             let lower = key.lowercased()
             if lower.contains("rolling") || lower.contains("session") || lower.contains("hourly") ||
-               lower.contains("rate_limit") || lower.contains("ratelimit") || lower.contains("short") ||
-               lower.contains("5h") || lower.contains("five_hour")
+                lower.contains("rate_limit") || lower.contains("ratelimit") || lower.contains("short") ||
+                lower.contains("5h") || lower.contains("five_hour")
             {
                 rolling = sub
             } else if lower.contains("weekly") || lower.contains("week") || lower.contains("quota") ||
-                      lower.contains("monthly") || lower.contains("long") || lower.contains("secondary")
+                lower.contains("monthly") || lower.contains("long") || lower.contains("secondary")
             {
                 weekly = sub
             }
