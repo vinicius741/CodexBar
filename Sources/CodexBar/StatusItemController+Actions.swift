@@ -35,24 +35,31 @@ extension StatusItemController {
             ?? (self.store.isEnabled(.codex) ? .codex : self.store.enabledProviders().first)
 
         let provider = preferred ?? .codex
-        let meta = self.store.metadata(for: provider)
+        guard let url = self.dashboardURL(for: provider) else { return }
+        NSWorkspace.shared.open(url)
+    }
 
-        // For Copilot, use dynamic endpoint URL
-        let urlString: String?
+    func dashboardURL(for provider: UsageProvider) -> URL? {
+        if provider == .alibaba {
+            return self.settings.alibabaCodingPlanAPIRegion.dashboardURL
+        }
+
         if provider == .copilot {
             let endpoint = CopilotSettingsReader.resolveEndpoint(
                 environment: ProcessInfo.processInfo.environment,
                 config: self.settings.configSnapshot.providerConfig(for: .copilot))
-            urlString = endpoint.dashboardURL.absoluteString
-        } else if provider == .claude, self.store.isClaudeSubscription() {
-            // For Claude, route subscription users to claude.ai/settings/usage instead of console billing
-            urlString = meta.subscriptionDashboardURL ?? meta.dashboardURL
-        } else {
-            urlString = meta.dashboardURL
+            return endpoint.dashboardURL
         }
 
-        guard let urlString, let url = URL(string: urlString) else { return }
-        NSWorkspace.shared.open(url)
+        let meta = self.store.metadata(for: provider)
+        let urlString: String? = if provider == .claude, self.store.isClaudeSubscription() {
+            meta.subscriptionDashboardURL ?? meta.dashboardURL
+        } else {
+            meta.dashboardURL
+        }
+
+        guard let urlString else { return nil }
+        return URL(string: urlString)
     }
 
     @objc func openCreditsPurchase() {
