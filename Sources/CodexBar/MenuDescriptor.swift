@@ -5,6 +5,20 @@ import Foundation
 struct MenuDescriptor {
     private static let maxStatusLineLength = 72
 
+    struct SubmenuItem: Equatable {
+        let title: String
+        let action: MenuAction?
+        let isEnabled: Bool
+        let isChecked: Bool
+
+        init(title: String, action: MenuAction?, isEnabled: Bool = true, isChecked: Bool = false) {
+            self.title = title
+            self.action = action
+            self.isEnabled = isEnabled
+            self.isChecked = isChecked
+        }
+    }
+
     struct Section {
         var entries: [Entry]
     }
@@ -12,6 +26,7 @@ struct MenuDescriptor {
     enum Entry {
         case text(String, TextStyle)
         case action(String, MenuAction)
+        case submenu(String, String?, [SubmenuItem])
         case divider
     }
 
@@ -20,6 +35,7 @@ struct MenuDescriptor {
         case dashboard = "chart.bar"
         case statusPage = "waveform.path.ecg"
         case addAccount = "plus"
+        case systemAccount = "person.crop.circle"
         case switchAccount = "key"
         case openTerminal = "terminal"
         case loginToProvider = "arrow.right.square"
@@ -35,13 +51,14 @@ struct MenuDescriptor {
         case secondary
     }
 
-    enum MenuAction {
+    enum MenuAction: Equatable {
         case installUpdate
         case refresh
         case refreshAugmentSession
         case dashboard
         case statusPage
         case addCodexAccount
+        case requestCodexSystemPromotion(UUID)
         case switchAccount(UsageProvider)
         case openTerminal(command: String)
         case loginToProvider(url: String)
@@ -58,6 +75,8 @@ struct MenuDescriptor {
         store: UsageStore,
         settings: SettingsStore,
         account: AccountInfo,
+        managedCodexAccountCoordinator: ManagedCodexAccountCoordinator? = nil,
+        codexAccountPromotionCoordinator: CodexAccountPromotionCoordinator? = nil,
         updateReady: Bool,
         includeContextualActions: Bool = true) -> MenuDescriptor
     {
@@ -98,7 +117,12 @@ struct MenuDescriptor {
         }
 
         if includeContextualActions {
-            let actions = Self.actionsSection(for: provider, store: store, account: account)
+            let actions = Self.actionsSection(
+                for: provider,
+                store: store,
+                account: account,
+                managedCodexAccountCoordinator: managedCodexAccountCoordinator,
+                codexAccountPromotionCoordinator: codexAccountPromotionCoordinator)
             if !actions.entries.isEmpty {
                 sections.append(actions)
             }
@@ -316,7 +340,9 @@ struct MenuDescriptor {
     private static func actionsSection(
         for provider: UsageProvider?,
         store: UsageStore,
-        account: AccountInfo) -> Section
+        account: AccountInfo,
+        managedCodexAccountCoordinator: ManagedCodexAccountCoordinator?,
+        codexAccountPromotionCoordinator: CodexAccountPromotionCoordinator?) -> Section
     {
         var entries: [Entry] = []
         let targetProvider = provider ?? store.enabledProviders().first
@@ -352,7 +378,9 @@ struct MenuDescriptor {
                 provider: targetProvider,
                 store: store,
                 settings: store.settings,
-                account: fallbackAccount)
+                account: fallbackAccount,
+                managedCodexAccountCoordinator: managedCodexAccountCoordinator,
+                codexAccountPromotionCoordinator: codexAccountPromotionCoordinator)
             ProviderCatalog.implementation(for: targetProvider)?
                 .appendActionMenuEntries(context: actionContext, entries: &entries)
         }
@@ -377,6 +405,7 @@ struct MenuDescriptor {
             entries.append(.action("Update ready, restart now?", .installUpdate))
         }
         entries.append(contentsOf: [
+            .action("Refresh", .refresh),
             .action("Settings...", .settings),
             .action("About CodexBar", .about),
             .action("Quit", .quit),
@@ -505,6 +534,8 @@ extension MenuDescriptor.MenuAction {
         case .dashboard: MenuDescriptor.MenuActionSystemImage.dashboard.rawValue
         case .statusPage: MenuDescriptor.MenuActionSystemImage.statusPage.rawValue
         case .addCodexAccount: MenuDescriptor.MenuActionSystemImage.addAccount.rawValue
+        case .requestCodexSystemPromotion:
+            nil
         case .switchAccount: MenuDescriptor.MenuActionSystemImage.switchAccount.rawValue
         case .openTerminal: MenuDescriptor.MenuActionSystemImage.openTerminal.rawValue
         case .loginToProvider: MenuDescriptor.MenuActionSystemImage.loginToProvider.rawValue
