@@ -33,7 +33,7 @@ struct CopilotLoginFlow {
                 return // Cancelled
             }
 
-            if let url = URL(string: code.verificationUri) {
+            if let url = URL(string: code.verificationURLToOpen) {
                 NSWorkspace.shared.open(url)
             }
 
