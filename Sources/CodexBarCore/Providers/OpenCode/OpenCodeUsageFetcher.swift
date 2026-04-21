@@ -110,29 +110,6 @@ public struct OpenCodeUsageFetcher: Sendable {
         let referer: URL
     }
 
-    private enum WorkspacePageFallback: CaseIterable {
-        case go
-        case billing
-
-        var pathComponent: String {
-            switch self {
-            case .go:
-                "go"
-            case .billing:
-                "billing"
-            }
-        }
-
-        var label: String {
-            switch self {
-            case .go:
-                "Go"
-            case .billing:
-                "billing"
-            }
-        }
-    }
-
     public static func fetchUsage(
         cookieHeader: String,
         timeout: TimeInterval,
@@ -160,13 +137,13 @@ public struct OpenCodeUsageFetcher: Sendable {
             return try self.parseSubscription(text: subscriptionText, now: now)
         } catch let error as OpenCodeUsageError {
             guard self.shouldFallbackToBilling(after: error) else { throw error }
-            Self.log.warning("OpenCode server usage fetch failed; falling back to workspace page parser.")
-            return try await self.fetchFallbackSubscriptionSnapshot(
+            Self.log.warning("OpenCode server usage fetch failed; falling back to billing page parser.")
+            let billingText = try await self.fetchBillingSubscriptionInfo(
                 workspaceID: workspaceID,
                 cookieHeader: requestCookieHeader,
                 timeout: timeout,
-                now: now,
                 session: session)
+            return try self.parseSubscription(text: billingText, now: now)
         }
     }
 
@@ -268,44 +245,13 @@ public struct OpenCodeUsageFetcher: Sendable {
         return text
     }
 
-    private static func fetchFallbackSubscriptionSnapshot(
+    private static func fetchBillingSubscriptionInfo(
         workspaceID: String,
-        cookieHeader: String,
-        timeout: TimeInterval,
-        now: Date,
-        session: URLSession = .shared) async throws -> OpenCodeUsageSnapshot
-    {
-        var lastError: OpenCodeUsageError?
-
-        for page in WorkspacePageFallback.allCases {
-            do {
-                let text = try await self.fetchWorkspacePage(
-                    workspaceID: workspaceID,
-                    page: page,
-                    cookieHeader: cookieHeader,
-                    timeout: timeout,
-                    session: session)
-                return try self.parseSubscription(text: text, now: now)
-            } catch let error as OpenCodeUsageError {
-                if case .invalidCredentials = error {
-                    throw error
-                }
-                lastError = error
-                Self.log.warning("OpenCode \(page.label) page parser failed: \(error.localizedDescription)")
-            }
-        }
-
-        throw lastError ?? OpenCodeUsageError.parseFailed("Missing usage fields.")
-    }
-
-    private static func fetchWorkspacePage(
-        workspaceID: String,
-        page: WorkspacePageFallback,
         cookieHeader: String,
         timeout: TimeInterval,
         session: URLSession = .shared) async throws -> String
     {
-        let url = URL(string: "https://opencode.ai/workspace/\(workspaceID)/\(page.pathComponent)") ?? self.baseURL
+        let url = URL(string: "https://opencode.ai/workspace/\(workspaceID)/billing") ?? self.baseURL
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = timeout
@@ -332,7 +278,7 @@ public struct OpenCodeUsageFetcher: Sendable {
         guard httpResponse.statusCode == 200 else {
             let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
             Self.log.error(
-                "OpenCode \(page.label) page returned \(httpResponse.statusCode) (type=\(contentType) length=\(data.count))")
+                "OpenCode billing returned \(httpResponse.statusCode) (type=\(contentType) length=\(data.count))")
             if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                 throw OpenCodeUsageError.invalidCredentials
             }

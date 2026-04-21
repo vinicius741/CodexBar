@@ -1097,6 +1097,12 @@ extension UsageMenuCardView.Model {
             primaryPacePercent = regen.pace.pacePercent
             primaryPaceOnTop = regen.pace.paceOnTop
         }
+        if input.provider == .copilot,
+           let copilotDetail = Self.copilotBudgetDetail(for: primary, now: input.now)
+        {
+            primaryDetailLeft = copilotDetail.daysLeftText
+            primaryDetailRight = copilotDetail.dailyBudgetText
+        }
         return Metric(
             id: "primary",
             title: input.metadata.sessionLabel,
