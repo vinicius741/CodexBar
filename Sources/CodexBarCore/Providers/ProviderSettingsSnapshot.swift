@@ -21,7 +21,8 @@ public struct ProviderSettingsSnapshot: Sendable {
         ollama: OllamaProviderSettings? = nil,
         jetbrains: JetBrainsProviderSettings? = nil,
         perplexity: PerplexityProviderSettings? = nil,
-        abacus: AbacusProviderSettings? = nil) -> ProviderSettingsSnapshot
+        abacus: AbacusProviderSettings? = nil,
+        mistral: MistralProviderSettings? = nil) -> ProviderSettingsSnapshot
     {
         ProviderSettingsSnapshot(
             debugMenuEnabled: debugMenuEnabled,
@@ -43,7 +44,8 @@ public struct ProviderSettingsSnapshot: Sendable {
             ollama: ollama,
             jetbrains: jetbrains,
             perplexity: perplexity,
-            abacus: abacus)
+            abacus: abacus,
+            mistral: mistral)
     }
 
     public struct CodexProviderSettings: Sendable {
@@ -250,6 +252,16 @@ public struct ProviderSettingsSnapshot: Sendable {
         }
     }
 
+    public struct MistralProviderSettings: Sendable {
+        public let cookieSource: ProviderCookieSource
+        public let manualCookieHeader: String?
+
+        public init(cookieSource: ProviderCookieSource, manualCookieHeader: String?) {
+            self.cookieSource = cookieSource
+            self.manualCookieHeader = manualCookieHeader
+        }
+    }
+
     public let debugMenuEnabled: Bool
     public let debugKeepCLISessionsAlive: Bool
     public let codex: CodexProviderSettings?
@@ -270,6 +282,7 @@ public struct ProviderSettingsSnapshot: Sendable {
     public let jetbrains: JetBrainsProviderSettings?
     public let perplexity: PerplexityProviderSettings?
     public let abacus: AbacusProviderSettings?
+    public let mistral: MistralProviderSettings?
 
     public var jetbrainsIDEBasePath: String? {
         self.jetbrains?.ideBasePath
@@ -295,7 +308,8 @@ public struct ProviderSettingsSnapshot: Sendable {
         ollama: OllamaProviderSettings?,
         jetbrains: JetBrainsProviderSettings? = nil,
         perplexity: PerplexityProviderSettings? = nil,
-        abacus: AbacusProviderSettings? = nil)
+        abacus: AbacusProviderSettings? = nil,
+        mistral: MistralProviderSettings? = nil)
     {
         self.debugMenuEnabled = debugMenuEnabled
         self.debugKeepCLISessionsAlive = debugKeepCLISessionsAlive
@@ -317,6 +331,7 @@ public struct ProviderSettingsSnapshot: Sendable {
         self.jetbrains = jetbrains
         self.perplexity = perplexity
         self.abacus = abacus
+        self.mistral = mistral
     }
 }
 
@@ -339,6 +354,7 @@ public enum ProviderSettingsSnapshotContribution: Sendable {
     case jetbrains(ProviderSettingsSnapshot.JetBrainsProviderSettings)
     case perplexity(ProviderSettingsSnapshot.PerplexityProviderSettings)
     case abacus(ProviderSettingsSnapshot.AbacusProviderSettings)
+    case mistral(ProviderSettingsSnapshot.MistralProviderSettings)
 }
 
 public struct ProviderSettingsSnapshotBuilder: Sendable {
@@ -362,6 +378,7 @@ public struct ProviderSettingsSnapshotBuilder: Sendable {
     public var jetbrains: ProviderSettingsSnapshot.JetBrainsProviderSettings?
     public var perplexity: ProviderSettingsSnapshot.PerplexityProviderSettings?
     public var abacus: ProviderSettingsSnapshot.AbacusProviderSettings?
+    public var mistral: ProviderSettingsSnapshot.MistralProviderSettings?
 
     public init(debugMenuEnabled: Bool = false, debugKeepCLISessionsAlive: Bool = false) {
         self.debugMenuEnabled = debugMenuEnabled
@@ -388,6 +405,7 @@ public struct ProviderSettingsSnapshotBuilder: Sendable {
         case let .jetbrains(value): self.jetbrains = value
         case let .perplexity(value): self.perplexity = value
         case let .abacus(value): self.abacus = value
+        case let .mistral(value): self.mistral = value
         }
     }
 
@@ -412,6 +430,7 @@ public struct ProviderSettingsSnapshotBuilder: Sendable {
             ollama: self.ollama,
             jetbrains: self.jetbrains,
             perplexity: self.perplexity,
-            abacus: self.abacus)
+            abacus: self.abacus,
+            mistral: self.mistral)
     }
 }
