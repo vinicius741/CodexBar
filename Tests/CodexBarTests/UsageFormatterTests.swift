@@ -369,4 +369,14 @@ struct UsageFormatterTests {
         // Feb 28 23:59:59 - Feb 1 12:00 = ~27.5 days → ceil = 28
         #expect(days == 28)
     }
+
+    @Test
+    func `byte count string formats binary units`() {
+        #expect(UsageFormatter.byteCountString(0) == "0 B")
+        #expect(UsageFormatter.byteCountString(512) == "512 B")
+        #expect(UsageFormatter.byteCountString(1536) == "1.5 KB")
+        #expect(UsageFormatter.byteCountString(10 * 1024) == "10 KB")
+        #expect(UsageFormatter.byteCountString(5 * 1024 * 1024) == "5 MB")
+        #expect(UsageFormatter.byteCountString(Int64(1536 * 1024 * 1024)) == "1.5 GB")
+    }
 }

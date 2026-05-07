@@ -44,17 +44,16 @@ struct CopilotAPIFetchStrategy: ProviderFetchStrategy {
     let kind: ProviderFetchKind = .apiToken
 
     func isAvailable(_ context: ProviderFetchContext) async -> Bool {
-        Self.resolveToken(environment: context.env) != nil
+        Self.resolveToken(context: context) != nil
     }
 
     func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-        guard let token = Self.resolveToken(environment: context.env), !token.isEmpty else {
+        guard let token = Self.resolveToken(context: context), !token.isEmpty else {
             throw URLError(.userAuthenticationRequired)
         }
-        let endpoint = CopilotSettingsReader.resolveEndpoint(
-            environment: context.env,
-            config: context.settings?.copilot?.config)
-        let fetcher = CopilotUsageFetcher(token: token, endpoint: endpoint)
+        let fetcher = CopilotUsageFetcher(
+            token: token,
+            enterpriseHost: context.settings?.copilot?.enterpriseHost)
         let snap = try await fetcher.fetch()
         return self.makeResult(
             usage: snap,
@@ -65,7 +64,10 @@ struct CopilotAPIFetchStrategy: ProviderFetchStrategy {
         false
     }
 
-    private static func resolveToken(environment: [String: String]) -> String? {
-        ProviderTokenResolver.copilotToken(environment: environment)
+    private static func resolveToken(context: ProviderFetchContext) -> String? {
+        ProviderTokenResolver.copilotToken(environment: context.env)
+            ?? ProviderTokenResolver.copilotResolution(environment: [
+                "COPILOT_API_TOKEN": context.settings?.copilot?.apiToken ?? "",
+            ])?.token
     }
 }

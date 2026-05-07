@@ -390,6 +390,13 @@ struct ProvidersPane: View {
                     }
                 }
             },
+            primaryAddActionTitle: provider == .copilot ? "Add Account" : nil,
+            primaryAddAction: provider == .copilot ? {
+                await CopilotLoginFlow.run(settings: self.settings)
+                await ProviderInteractionContext.$current.withValue(.userInitiated) {
+                    await self.store.refreshProvider(provider, allowDisabled: true)
+                }
+            } : nil,
             openConfigFile: {
                 self.settings.openTokenAccountsFile()
             },
@@ -452,6 +459,10 @@ struct ProvidersPane: View {
                     id: MenuBarMetricPreference.primary.rawValue,
                     title: "Primary (API key limit)"),
             ]
+        } else if provider == .deepseek {
+            options = [
+                ProviderSettingsPickerOption(id: MenuBarMetricPreference.automatic.rawValue, title: "Automatic"),
+            ]
         } else if provider == .abacus {
             let metadata = self.store.metadata(for: provider)
             options = [
@@ -496,7 +507,9 @@ struct ProvidersPane: View {
         return ProviderSettingsPickerDescriptor(
             id: "menuBarMetric",
             title: "Menu bar metric",
-            subtitle: "Choose which window drives the menu bar percent.",
+            subtitle: provider == .deepseek
+                ? "Shows the DeepSeek balance in the menu bar."
+                : "Choose which window drives the menu bar percent.",
             binding: Binding(
                 get: {
                     self.settings
@@ -579,6 +592,7 @@ struct ProvidersPane: View {
             tokenCostUsageEnabled: self.settings.isCostUsageEffectivelyEnabled(for: provider),
             showOptionalCreditsAndExtraUsage: self.settings.showOptionalCreditsAndExtraUsage,
             hidePersonalInfo: self.settings.hidePersonalInfo,
+            claudePeakHoursEnabled: self.settings.claudePeakHoursEnabled,
             weeklyPace: weeklyPace,
             now: now)
         return UsageMenuCardView.Model.make(input)
@@ -611,6 +625,8 @@ struct ProvidersPane: View {
             case .missingEmail:
                 "Codex login completed, but no account email was available. Try again after confirming "
                     + "the account is fully signed in."
+            case .workspaceSelectionCancelled:
+                "CodexBar found multiple workspaces, but no workspace was selected."
             case let .unsafeManagedHome(path):
                 "CodexBar refused to modify an unexpected managed home path: \(path)"
             }

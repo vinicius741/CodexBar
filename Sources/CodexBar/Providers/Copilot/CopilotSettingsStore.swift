@@ -12,11 +12,11 @@ extension SettingsStore {
         }
     }
 
-    var copilotEnterpriseURL: String {
-        get { self.configSnapshot.providerConfig(for: .copilot)?.enterpriseURL ?? "" }
+    var copilotEnterpriseHost: String {
+        get { self.configSnapshot.providerConfig(for: .copilot)?.sanitizedEnterpriseHost ?? "" }
         set {
             self.updateProviderConfig(provider: .copilot) { entry in
-                entry.enterpriseURL = self.normalizedConfigValue(newValue)
+                entry.enterpriseHost = self.normalizedConfigValue(newValue)
             }
         }
     }
@@ -25,10 +25,17 @@ extension SettingsStore {
 }
 
 extension SettingsStore {
-    func copilotSettingsSnapshot() -> ProviderSettingsSnapshot.CopilotProviderSettings {
-        let config = self.configSnapshot.providerConfig(for: .copilot)
+    func copilotSettingsSnapshot(
+        tokenOverride: TokenAccountOverride?) -> ProviderSettingsSnapshot.CopilotProviderSettings
+    {
+        let account = ProviderTokenAccountSelection.selectedAccount(
+            provider: .copilot,
+            settings: self,
+            override: tokenOverride)
+        let token = account?.token ?? self.copilotAPIToken
+        let host = CopilotDeviceFlow.normalizedHost(self.copilotEnterpriseHost)
         return ProviderSettingsSnapshot.CopilotProviderSettings(
-            enterpriseURL: config?.enterpriseURL,
-            config: config)
+            apiToken: self.normalizedConfigValue(token),
+            enterpriseHost: host == CopilotDeviceFlow.defaultHost ? nil : host)
     }
 }
