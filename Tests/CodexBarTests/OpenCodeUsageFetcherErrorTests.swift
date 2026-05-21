@@ -87,7 +87,7 @@ struct OpenCodeUsageFetcherErrorTests {
             queries.append(url.query ?? "")
             contentTypes.append(request.value(forHTTPHeaderField: "Content-Type") ?? "")
 
-            if url.path == "/_server" {
+            if request.httpMethod?.uppercased() == "GET" {
                 return Self.makeResponse(url: url, body: "null", statusCode: 200, contentType: "application/json")
             }
 
@@ -105,128 +105,18 @@ struct OpenCodeUsageFetcherErrorTests {
         } catch let error as OpenCodeUsageError {
             switch error {
             case let .apiError(message):
-                #expect(message.contains("HTTP 500"))
+                #expect(message.contains("No subscription usage data"))
+                #expect(message.contains("wrk_TEST123"))
             default:
                 Issue.record("Expected apiError, got: \(error)")
             }
         }
 
-        #expect(methods == ["GET", "GET"])
+        #expect(methods == ["GET"])
         #expect(queries[0].contains("id="))
         #expect(queries[0].contains("wrk_TEST123"))
         #expect(urls[0].path == "/_server")
         #expect(contentTypes[0].isEmpty)
-        #expect(urls[1].path == "/workspace/wrk_TEST123/billing")
-        #expect(contentTypes[1].isEmpty)
-    }
-
-    @Test
-    func invalidCredentialsDoesNotFallbackToBilling() async throws {
-        let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
-        defer {
-            if registered {
-                URLProtocol.unregisterClass(OpenCodeStubURLProtocol.self)
-            }
-            OpenCodeStubURLProtocol.handler = nil
-        }
-
-        var methodsByPath: [String] = []
-        OpenCodeStubURLProtocol.handler = { request in
-            guard let url = request.url else { throw URLError(.badURL) }
-            methodsByPath.append("\(request.httpMethod ?? "GET") \(url.path)")
-            return Self.makeResponse(
-                url: url,
-                body: #"{"status":401,"message":"unauthorized"}"#,
-                statusCode: 401,
-                contentType: "application/json")
-        }
-
-        do {
-            _ = try await OpenCodeUsageFetcher.fetchUsage(
-                cookieHeader: "auth=test",
-                timeout: 2,
-                workspaceIDOverride: "wrk_TEST123")
-            Issue.record("Expected OpenCodeUsageError.invalidCredentials")
-        } catch let error as OpenCodeUsageError {
-            switch error {
-            case .invalidCredentials:
-                break
-            default:
-                Issue.record("Expected invalidCredentials, got: \(error)")
-            }
-        }
-
-        #expect(methodsByPath == ["GET /_server"])
-    }
-
-    @Test
-    func subscriptionNullFallsBackToBillingParser() async throws {
-        let registered = URLProtocol.registerClass(OpenCodeStubURLProtocol.self)
-        defer {
-            if registered {
-                URLProtocol.unregisterClass(OpenCodeStubURLProtocol.self)
-            }
-            OpenCodeStubURLProtocol.handler = nil
-        }
-
-        var methodsByPath: [String] = []
-        OpenCodeStubURLProtocol.handler = { request in
-            guard let url = request.url else { throw URLError(.badURL) }
-            methodsByPath.append("\(request.httpMethod ?? "GET") \(url.path)")
-
-            if url.path == "/_server" {
-                let query = url.query ?? ""
-                if query.contains("id=7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4") {
-                    return Self.makeResponse(
-                        url: url,
-                        body: "null",
-                        statusCode: 200,
-                        contentType: "text/javascript")
-                }
-                return Self.makeResponse(
-                    url: url,
-                    body: #"{"status":500,"message":"unexpected id"}"#,
-                    statusCode: 500,
-                    contentType: "application/json")
-            }
-
-            if url.path == "/workspace/wrk_TEST123/billing" {
-                let body = """
-                <h2>Go Subscription</h2>
-                <p>You are subscribed to OpenCode Go.</p>
-                <script>
-                rollingUsage:$R[47]={status:"ok",resetInSec:111,usagePercent:9},
-                weeklyUsage:$R[48]={status:"ok",resetInSec:222,usagePercent:4}
-                </script>
-                """
-                return Self.makeResponse(
-                    url: url,
-                    body: body,
-                    statusCode: 200,
-                    contentType: "text/html")
-            }
-
-            return Self.makeResponse(
-                url: url,
-                body: #"{"status":404,"message":"not found"}"#,
-                statusCode: 404,
-                contentType: "application/json")
-        }
-
-        let snapshot = try await OpenCodeUsageFetcher.fetchUsage(
-            cookieHeader: "auth=test",
-            timeout: 2,
-            workspaceIDOverride: "wrk_TEST123")
-
-        #expect(snapshot.rollingUsagePercent == 9)
-        #expect(snapshot.weeklyUsagePercent == 4)
-        #expect(snapshot.rollingResetInSec == 111)
-        #expect(snapshot.weeklyResetInSec == 222)
-        #expect(snapshot.planName == "OpenCode Go")
-        #expect(methodsByPath == [
-            "GET /_server",
-            "GET /workspace/wrk_TEST123/billing",
-        ])
     }
 
     @Test

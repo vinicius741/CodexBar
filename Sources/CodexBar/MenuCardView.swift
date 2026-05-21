@@ -1299,7 +1299,8 @@ extension UsageMenuCardView.Model {
             now: input.now,
             pace: input.weeklyPace,
             showUsed: input.usageBarsShowUsed)
-        let copilotDetail = input.provider == .copilot ? Self.copilotBudgetDetail(for: weekly, now: input.now) : nil
+        var copilotDetailDaysLeft: String? = nil
+        var copilotDetailDailyBudget: String? = nil
         var weeklyResetText = Self.resetText(for: weekly, style: input.resetTimeDisplayStyle, now: input.now)
         var weeklyDetailText: String? = input.provider == .zai ? zaiTimeDetail : nil
         if input.provider == .warp,
@@ -1379,8 +1380,8 @@ extension UsageMenuCardView.Model {
             percentStyle: percentStyle,
             resetText: weeklyResetText,
             detailText: weeklyDetailText,
-            detailLeftText: paceDetail?.leftLabel ?? copilotDetail?.daysLeftText,
-            detailRightText: paceDetail?.rightLabel ?? copilotDetail?.dailyBudgetText,
+            detailLeftText: paceDetail?.leftLabel ?? copilotDetailDaysLeft,
+            detailRightText: paceDetail?.rightLabel ?? copilotDetailDailyBudget,
             pacePercent: paceDetail?.pacePercent,
             paceOnTop: paceDetail?.paceOnTop ?? true,
             warningMarkerPercents: Self.warningMarkerPercents(

@@ -107,7 +107,8 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
         codexActiveSource: CodexActiveSource? = nil,
         quotaWarnings: QuotaWarningConfig? = nil,
         kiloKnownOrganizations: [KiloOrganization]? = nil,
-        kiloEnabledOrganizationIDs: [String]? = nil)
+        kiloEnabledOrganizationIDs: [String]? = nil,
+        enterpriseURL: String? = nil)
     {
         self.id = id
         self.enabled = enabled

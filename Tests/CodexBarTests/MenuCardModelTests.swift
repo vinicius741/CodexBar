@@ -1486,60 +1486,6 @@ struct MenuCardModelTests {
     }
 
     @Test
-    func copilotModelShowsDaysLeftAndDailyBudget() throws {
-        let now = DateComponents(calendar: .init(identifier: .gregorian), year: 2026, month: 2, day: 22, hour: 12).date!
-        let reset = DateComponents(calendar: .init(identifier: .gregorian), year: 2026, month: 3, day: 5, hour: 12).date!
-        let identity = ProviderIdentitySnapshot(
-            providerID: .copilot,
-            accountEmail: nil,
-            accountOrganization: nil,
-            loginMethod: "Business")
-        let snapshot = UsageSnapshot(
-            primary: RateWindow(
-                usedPercent: 7,
-                windowMinutes: nil,
-                resetsAt: reset,
-                resetDescription: nil),
-            secondary: RateWindow(
-                usedPercent: 0,
-                windowMinutes: nil,
-                resetsAt: reset,
-                resetDescription: nil),
-            tertiary: nil,
-            updatedAt: now,
-            identity: identity)
-        let metadata = try #require(ProviderDefaults.metadata[.copilot])
-
-        let model = UsageMenuCardView.Model.make(.init(
-            provider: .copilot,
-            metadata: metadata,
-            snapshot: snapshot,
-            credits: nil,
-            creditsError: nil,
-            dashboard: nil,
-            dashboardError: nil,
-            tokenSnapshot: nil,
-            tokenError: nil,
-            account: AccountInfo(email: nil, plan: nil),
-            isRefreshing: false,
-            lastError: nil,
-            usageBarsShowUsed: false,
-            resetTimeDisplayStyle: .countdown,
-            tokenCostUsageEnabled: false,
-            showOptionalCreditsAndExtraUsage: true,
-            hidePersonalInfo: false,
-            now: now))
-
-        let premium = try #require(model.metrics.first { $0.id == "primary" })
-        #expect(premium.detailLeftText == "7 days left")
-        #expect(premium.detailRightText == "13.3% per day")
-
-        let chat = try #require(model.metrics.first { $0.id == "secondary" })
-        #expect(chat.detailLeftText == "7 days left")
-        #expect(chat.detailRightText == "14.3% per day")
-    }
-
-    @Test
     func `mistral model surfaces monthly cost as primary detail text`() throws {
         let now = Date()
         let resetsAt = now.addingTimeInterval(3 * 24 * 60 * 60)
