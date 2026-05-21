@@ -4,15 +4,22 @@ import CodexBarCore
 extension StatusItemController: StatusItemMenuPersistentActionDelegate {
     // MARK: - Actions reachable from menus
 
-    func refreshStore(forceTokenUsage: Bool) {
+    func refreshStore(forceTokenUsage: Bool, refreshOpenMenusWhenComplete: Bool = true) {
         Task {
             await ProviderInteractionContext.$current.withValue(.userInitiated) {
                 await self.store.refresh(forceTokenUsage: forceTokenUsage)
                 self.store.scheduleStorageFootprintRefreshForOverview(force: true)
-                self.invalidateMenus()
-                self.refreshOpenMenusIfNeeded()
+                if refreshOpenMenusWhenComplete {
+                    self.refreshOpenMenusAfterExplicitStoreAction()
+                } else {
+                    self.invalidateMenus()
+                }
             }
         }
+    }
+
+    func refreshOpenMenusAfterExplicitStoreAction() {
+        self.invalidateMenus(refreshOpenMenus: true)
     }
 
     @objc func refreshNow() {
@@ -25,6 +32,28 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         }
     }
 
+    nonisolated func performPersistentSettingsAction() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.closeOpenMenusFromShortcutIfNeeded()
+            self.showSettingsGeneral()
+        }
+    }
+
+    nonisolated func performPersistentQuitAction() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.closeOpenMenusFromShortcutIfNeeded()
+            self.quit()
+        }
+    }
+
+    nonisolated func performProviderNavigation(_ direction: StatusItemMenuProviderNavigationDirection) {
+        Task { @MainActor [weak self] in
+            self?.navigateProviderSwitcher(direction)
+        }
+    }
+
     @objc func refreshAugmentSession() {
         Task {
             await self.store.forceRefreshAugmentSession()
@@ -32,11 +61,12 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
             await ProviderInteractionContext.$current.withValue(.userInitiated) {
                 await self.store.refresh(forceTokenUsage: false)
             }
+            self.refreshOpenMenusAfterExplicitStoreAction()
         }
     }
 
     @objc func installUpdate() {
-        self.updater.checkForUpdates(nil)
+        self.updater.installUpdate()
     }
 
     @objc func openDashboard() {
@@ -51,6 +81,9 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
     func dashboardURL(for provider: UsageProvider) -> URL? {
         if provider == .alibaba {
             return self.settings.alibabaCodingPlanAPIRegion.dashboardURL
+        }
+        if provider == .minimax {
+            return self.settings.minimaxAPIRegion.dashboardURL
         }
 
         if provider == .opencodego {
@@ -87,13 +120,22 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         self.creditsPurchaseWindow = controller
     }
 
-    private static func sanitizedCreditsPurchaseURL(_ raw: String?) -> String? {
+    static func sanitizedCreditsPurchaseURL(_ raw: String?) -> String? {
         guard let raw, let url = URL(string: raw) else { return nil }
-        guard let host = url.host?.lowercased(), host.contains("chatgpt.com") else { return nil }
-        let path = url.path.lowercased()
+        guard Self.isAllowedChatGPTPurchaseHost(url) else { return nil }
+        let pathComponents = url.pathComponents.map { $0.lowercased() }
         let allowed = ["settings", "usage", "billing", "credits"]
-        guard allowed.contains(where: { path.contains($0) }) else { return nil }
-        return url.absoluteString
+        guard pathComponents.contains(where: { allowed.contains($0) }) else { return nil }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.query = nil
+        components?.fragment = nil
+        return components?.url?.absoluteString ?? url.absoluteString
+    }
+
+    private static func isAllowedChatGPTPurchaseHost(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https" else { return false }
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "chatgpt.com" || host.hasSuffix(".chatgpt.com")
     }
 
     @objc func openStatusPage() {
@@ -104,6 +146,16 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         let meta = self.store.metadata(for: provider)
         let urlString = meta.statusPageURL ?? meta.statusLinkURL
         guard let urlString, let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc func openChangelog() {
+        let preferred = self.lastMenuProvider
+            ?? (self.store.isEnabled(.codex) ? .codex : self.store.enabledProviders().first)
+
+        let provider = preferred ?? .codex
+        let meta = self.store.metadata(for: provider)
+        guard let urlString = meta.changelogURL, let url = URL(string: urlString) else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -170,25 +222,18 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         let rawProvider = sender.representedObject as? String
         let provider = rawProvider.flatMap(UsageProvider.init(rawValue:)) ?? self.lastMenuProvider ?? .codex
         self.loginLogger.info("Switch Account tapped", metadata: ["provider": provider.rawValue])
+        self.startLoginFlow(provider: provider)
+    }
 
-        self.loginTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.activeLoginProvider = nil
-                self.loginTask = nil
-            }
-            self.activeLoginProvider = provider
-            self.loginPhase = .requesting
-            self.loginLogger.info("Starting login task", metadata: ["provider": provider.rawValue])
-
-            let shouldRefresh = await self.runLoginFlow(provider: provider)
-            if shouldRefresh {
-                await ProviderInteractionContext.$current.withValue(.userInitiated) {
-                    await self.store.refresh()
-                }
-                self.loginLogger.info("Triggered refresh after login", metadata: ["provider": provider.rawValue])
-            }
+    func runLoginFlowFromSettings(provider: UsageProvider) async {
+        guard self.loginTask == nil else {
+            self.loginLogger.info(
+                "Settings login tap ignored: login already in-flight",
+                metadata: ["provider": provider.rawValue])
+            return
         }
+        self.startLoginFlow(provider: provider)
+        await self.loginTask?.value
     }
 
     @objc func showSettingsGeneral() {
@@ -301,6 +346,27 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         return .codex
     }
 
+    private func startLoginFlow(provider: UsageProvider) {
+        self.loginTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.activeLoginProvider = nil
+                self.loginTask = nil
+            }
+            self.activeLoginProvider = provider
+            self.loginPhase = .requesting
+            self.loginLogger.info("Starting login task", metadata: ["provider": provider.rawValue])
+
+            let shouldRefresh = await self.runLoginFlow(provider: provider)
+            if shouldRefresh {
+                await ProviderInteractionContext.$current.withValue(.userInitiated) {
+                    await self.store.refresh()
+                }
+                self.loginLogger.info("Triggered refresh after login", metadata: ["provider": provider.rawValue])
+            }
+        }
+    }
+
     func presentCodexLoginResult(_ result: CodexLoginRunner.Result) {
         guard let info = CodexLoginAlertPresentation.alertInfo(for: result) else { return }
         self.presentLoginAlert(title: info.title, message: info.message)
@@ -317,7 +383,7 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         } else if let error = error as? ManagedCodexAccountServiceError {
             let message = switch error {
             case .loginFailed:
-                "Managed Codex login did not complete. Try again after finishing the browser login flow."
+                L("managed_login_failed")
             case .missingEmail:
                 "Codex login completed, but no account email was available. " +
                     "Try again after confirming the account is fully signed in."
@@ -383,8 +449,28 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
         }
     }
 
+    func describe(_ outcome: AntigravityLoginRunner.Result.Outcome) -> String {
+        switch outcome {
+        case let .success(email):
+            "success(email: \(email ?? "nil"))"
+        case .cancelled:
+            "cancelled"
+        case .timedOut:
+            "timedOut"
+        case let .launchFailed(message):
+            "launchFailed(\(message))"
+        case let .failed(message):
+            "failed(\(message))"
+        }
+    }
+
     func presentGeminiLoginResult(_ result: GeminiLoginRunner.Result) {
         guard let info = Self.geminiLoginAlertInfo(for: result) else { return }
+        self.presentLoginAlert(title: info.title, message: info.message)
+    }
+
+    func presentAntigravityLoginResult(_ result: AntigravityLoginRunner.Result) {
+        guard let info = Self.antigravityLoginAlertInfo(for: result) else { return }
         self.presentLoginAlert(title: info.title, message: info.message)
     }
 
@@ -403,6 +489,23 @@ extension StatusItemController: StatusItemMenuPersistentActionDelegate {
                 message: "Install the Gemini CLI (npm i -g @google/gemini-cli) and try again.")
         case let .launchFailed(message):
             LoginAlertInfo(title: "Could not open Terminal for Gemini", message: message)
+        }
+    }
+
+    nonisolated static func antigravityLoginAlertInfo(for result: AntigravityLoginRunner.Result) -> LoginAlertInfo? {
+        switch result.outcome {
+        case .success, .cancelled:
+            nil
+        case .timedOut:
+            LoginAlertInfo(
+                title: "Antigravity login timed out",
+                message: "The browser login did not complete in time. Try Antigravity login again.")
+        case let .launchFailed(message):
+            LoginAlertInfo(
+                title: "Could not open browser for Antigravity",
+                message: "Open this URL manually to continue login:\n\n\(message)")
+        case let .failed(message):
+            LoginAlertInfo(title: "Antigravity login failed", message: message)
         }
     }
 

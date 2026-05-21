@@ -165,8 +165,7 @@ extension StatusItemController {
             }
         }
         if mergeIcons {
-            let phase: Double? = self.needsMenuBarIconAnimation() ? self.animationPhase : nil
-            self.applyIcon(phase: phase)
+            self.applyIcon(phase: nil)
         }
     }
 
@@ -223,7 +222,6 @@ extension StatusItemController {
         return false
     }
 
-    // swiftlint:disable function_body_length
     @discardableResult
     func applyIcon(phase: Double?) -> Bool {
         guard let button = self.statusItem.button else { return false }
@@ -233,6 +231,7 @@ extension StatusItemController {
         let showBrandPercent = self.settings.menuBarShowsBrandIconWithPercent
         let primaryProvider = self.primaryProviderForUnifiedIcon()
         let snapshot = self.store.snapshot(for: primaryProvider)
+        let warningFlash = self.quotaWarningFlashActive(provider: primaryProvider)
 
         // IconRenderer treats these values as a left-to-right "progress fill" percentage; depending on the
         // user setting we pass either "percent left" or "percent used".
@@ -326,37 +325,14 @@ extension StatusItemController {
                 "stale=\(stale ? "1" : "0")",
                 "status=\(statusIndicator.rawValue)",
                 "text=\(displayText ?? "nil")",
+                "warningFlash=\(warningFlash ? "1" : "0")",
                 "anim=\(needsAnimation ? "1" : "0")",
             ].joined(separator: "|")
             if self.shouldSkipMergedIconRender(signature) {
                 return true
             }
-            self.setButtonImage(brand, for: button)
+            self.setButtonImage(warningFlash ? Self.quotaWarningFlashImage(base: brand) : brand, for: button)
             self.setButtonTitle(displayText, for: button)
-            return false
-        }
-
-        if Self.shouldUseOpenRouterBrandFallback(provider: primaryProvider, snapshot: snapshot),
-           let brand = ProviderBrandIcon.image(for: primaryProvider)
-        {
-            let signature = [
-                "mode=openRouterFallback",
-                "provider=\(primaryProvider.rawValue)",
-                "style=\(String(describing: style))",
-                "primary=\(debugDouble(primary))",
-                "weekly=\(debugDouble(weekly))",
-                "credits=\(debugDouble(credits))",
-                "stale=\(stale ? "1" : "0")",
-                "status=\(statusIndicator.rawValue)",
-                "anim=\(needsAnimation ? "1" : "0")",
-            ].joined(separator: "|")
-            if self.shouldSkipMergedIconRender(signature) {
-                return true
-            }
-            self.setButtonTitle(nil, for: button)
-            self.setButtonImage(
-                Self.brandImageWithStatusOverlay(brand: brand, statusIndicator: statusIndicator),
-                for: button)
             return false
         }
 
@@ -368,13 +344,14 @@ extension StatusItemController {
                 "style=\(String(describing: style))",
                 "morph=\(debugDouble(morphProgress))",
                 "status=\(statusIndicator.rawValue)",
+                "warningFlash=\(warningFlash ? "1" : "0")",
                 "anim=\(needsAnimation ? "1" : "0")",
             ].joined(separator: "|")
             if self.shouldSkipMergedIconRender(signature) {
                 return true
             }
             let image = IconRenderer.makeMorphIcon(progress: morphProgress, style: style)
-            self.setButtonImage(image, for: button)
+            self.setButtonImage(warningFlash ? Self.quotaWarningFlashImage(base: image) : image, for: button)
         } else {
             let signature = [
                 "mode=icon",
@@ -388,6 +365,7 @@ extension StatusItemController {
                 "blink=\(debugDouble(Double(blink)))",
                 "wiggle=\(debugDouble(Double(wiggle)))",
                 "tilt=\(debugDouble(Double(tilt)))",
+                "warningFlash=\(warningFlash ? "1" : "0")",
                 "anim=\(needsAnimation ? "1" : "0")",
             ].joined(separator: "|")
             if self.shouldSkipMergedIconRender(signature) {
@@ -403,12 +381,10 @@ extension StatusItemController {
                 wiggle: wiggle,
                 tilt: tilt,
                 statusIndicator: statusIndicator)
-            self.setButtonImage(image, for: button)
+            self.setButtonImage(warningFlash ? Self.quotaWarningFlashImage(base: image) : image, for: button)
         }
         return false
     }
-
-    // swiftlint:enable function_body_length
 
     private func shouldSkipMergedIconRender(_ signature: String) -> Bool {
         guard self.shouldMergeIcons else {
@@ -422,35 +398,45 @@ extension StatusItemController {
         return false
     }
 
-    func applyIcon(for provider: UsageProvider, phase: Double?) {
-        guard let button = self.statusItems[provider]?.button else { return }
+    private func shouldSkipProviderIconRender(provider: UsageProvider, signature: String) -> Bool {
+        if self.lastAppliedProviderIconRenderSignatures[provider] == signature {
+            return true
+        }
+        self.lastAppliedProviderIconRenderSignatures[provider] = signature
+        return false
+    }
+
+    @discardableResult
+    func applyIcon(for provider: UsageProvider, phase: Double?) -> Bool {
+        guard let button = self.statusItems[provider]?.button else { return false }
         let snapshot = self.store.snapshot(for: provider)
         // IconRenderer treats these values as a left-to-right "progress fill" percentage; depending on the
         // user setting we pass either "percent left" or "percent used".
         let showUsed = self.settings.usageBarsShowUsed
         let showBrandPercent = self.settings.menuBarShowsBrandIconWithPercent
         let style: IconStyle = self.store.style(for: provider)
+        let warningFlash = self.quotaWarningFlashActive(provider: provider)
 
         if showBrandPercent,
            let brand = ProviderBrandIcon.image(for: provider)
         {
             let displayText = self.menuBarDisplayText(for: provider, snapshot: snapshot)
-            self.setButtonImage(brand, for: button)
+            let signature = [
+                "mode=brandPercent",
+                "provider=\(provider.rawValue)",
+                "style=\(String(describing: style))",
+                "text=\(displayText ?? "nil")",
+                "warningFlash=\(warningFlash ? "1" : "0")",
+            ].joined(separator: "|")
+            if self.shouldSkipProviderIconRender(provider: provider, signature: signature) {
+                return true
+            }
+            self.setButtonImage(warningFlash ? Self.quotaWarningFlashImage(base: brand) : brand, for: button)
             self.setButtonTitle(displayText, for: button)
-            return
+            return false
         }
 
-        if Self.shouldUseOpenRouterBrandFallback(provider: provider, snapshot: snapshot),
-           let brand = ProviderBrandIcon.image(for: provider)
-        {
-            self.setButtonTitle(nil, for: button)
-            self.setButtonImage(
-                Self.brandImageWithStatusOverlay(
-                    brand: brand,
-                    statusIndicator: self.store.statusIndicator(for: provider)),
-                for: button)
-            return
-        }
+        // OpenRouter always gets a meter here — the brand-logo fallback was removed on purpose.
         let resolved = snapshot.map {
             IconRemainingResolver.resolvedPercents(
                 snapshot: $0,
@@ -519,10 +505,41 @@ extension StatusItemController {
         }()
         let wiggle = self.wiggleAmount(for: provider)
         let tilt = self.tiltAmount(for: provider) * .pi / 28 // limit to ~6.4°
+        let statusIndicator = self.store.statusIndicator(for: provider)
         if let morphProgress {
+            let signature = [
+                "mode=morph",
+                "provider=\(provider.rawValue)",
+                "style=\(String(describing: style))",
+                "morph=\(Self.iconSignatureValue(morphProgress))",
+                "status=\(statusIndicator.rawValue)",
+                "warningFlash=\(warningFlash ? "1" : "0")",
+                "loading=\(isLoading ? "1" : "0")",
+            ].joined(separator: "|")
+            if self.shouldSkipProviderIconRender(provider: provider, signature: signature) {
+                return true
+            }
             let image = IconRenderer.makeMorphIcon(progress: morphProgress, style: style)
-            self.setButtonImage(image, for: button)
+            self.setButtonImage(warningFlash ? Self.quotaWarningFlashImage(base: image) : image, for: button)
         } else {
+            let signature = [
+                "mode=icon",
+                "provider=\(provider.rawValue)",
+                "style=\(String(describing: style))",
+                "primary=\(Self.iconSignatureValue(primary))",
+                "weekly=\(Self.iconSignatureValue(weekly))",
+                "credits=\(Self.iconSignatureValue(credits))",
+                "stale=\(stale ? "1" : "0")",
+                "status=\(statusIndicator.rawValue)",
+                "blink=\(Self.iconSignatureValue(Double(blink)))",
+                "wiggle=\(Self.iconSignatureValue(Double(wiggle)))",
+                "tilt=\(Self.iconSignatureValue(Double(tilt)))",
+                "warningFlash=\(warningFlash ? "1" : "0")",
+                "loading=\(isLoading ? "1" : "0")",
+            ].joined(separator: "|")
+            if self.shouldSkipProviderIconRender(provider: provider, signature: signature) {
+                return true
+            }
             self.setButtonTitle(nil, for: button)
             let image = IconRenderer.makeIcon(
                 primaryRemaining: primary,
@@ -533,9 +550,38 @@ extension StatusItemController {
                 blink: blink,
                 wiggle: wiggle,
                 tilt: tilt,
-                statusIndicator: self.store.statusIndicator(for: provider))
-            self.setButtonImage(image, for: button)
+                statusIndicator: statusIndicator)
+            self.setButtonImage(warningFlash ? Self.quotaWarningFlashImage(base: image) : image, for: button)
         }
+        return false
+    }
+
+    private static func iconSignatureValue(_ value: Double?) -> String {
+        guard let value else { return "nil" }
+        return String(format: "%.3f", value)
+    }
+
+    func quotaWarningFlashActive(provider: UsageProvider, now: Date = Date()) -> Bool {
+        guard let until = self.quotaWarningFlashUntil[provider] else { return false }
+        if until > now { return true }
+        self.quotaWarningFlashUntil.removeValue(forKey: provider)
+        self.quotaWarningFlashTasks[provider]?.cancel()
+        self.quotaWarningFlashTasks.removeValue(forKey: provider)
+        return false
+    }
+
+    static func quotaWarningFlashImage(base: NSImage) -> NSImage {
+        let image = NSImage(size: base.size)
+        image.lockFocus()
+        let rect = NSRect(origin: .zero, size: base.size)
+        NSColor.systemRed.withAlphaComponent(0.22).setFill()
+        NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).fill()
+        base.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        NSColor.systemRed.withAlphaComponent(0.28).setFill()
+        NSBezierPath(rect: rect).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 
     private func setButtonImage(_ image: NSImage, for button: NSStatusBarButton) {
@@ -570,6 +616,27 @@ extension StatusItemController {
            let balance = Self.deepSeekBalanceDisplayText(snapshot: snapshot)
         {
             return balance
+        }
+        if provider == .moonshot,
+           let balance = Self.moonshotBalanceDisplayText(snapshot: snapshot)
+        {
+            return balance
+        }
+        if provider == .mistral,
+           let spend = Self.mistralSpendDisplayText(snapshot: snapshot)
+        {
+            return spend
+        }
+        if provider == .kimik2,
+           let credits = Self.kimiK2CreditsDisplayText(snapshot: snapshot)
+        {
+            return credits
+        }
+        if provider == .kiro {
+            return Self.kiroDisplayText(
+                snapshot: snapshot,
+                mode: self.settings.kiroMenuBarDisplayMode,
+                showUsed: self.settings.usageBarsShowUsed)
         }
 
         let percentWindow = self.menuBarPercentWindow(for: provider, snapshot: snapshot)
@@ -624,6 +691,150 @@ extension StatusItemController {
 
         let balance = rawValue.split(separator: " ", maxSplits: 1).first
         return balance.map(String.init)
+    }
+
+    nonisolated static func moonshotBalanceDisplayText(snapshot: UsageSnapshot?) -> String? {
+        self.displayValue(
+            from: snapshot?.loginMethod(for: .moonshot),
+            prefix: "Balance:",
+            removingSuffix: "")
+            .flatMap { value in
+                value
+                    .split(separator: "·", maxSplits: 1)
+                    .first?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+    }
+
+    nonisolated static func mistralSpendDisplayText(snapshot: UsageSnapshot?) -> String? {
+        self.displayValue(
+            from: snapshot?.identity?.loginMethod,
+            prefix: "API spend:",
+            removingSuffix: " this month")
+    }
+
+    nonisolated static func kimiK2CreditsDisplayText(snapshot: UsageSnapshot?) -> String? {
+        self.displayValue(
+            from: snapshot?.identity?.loginMethod,
+            prefix: "Credits:",
+            removingSuffix: " left")
+    }
+
+    nonisolated static func kiroDisplayText(
+        snapshot: UsageSnapshot?,
+        mode: KiroMenuBarDisplayMode,
+        showUsed: Bool)
+        -> String?
+    {
+        guard mode != .hidden else { return nil }
+        guard let usage = snapshot?.kiroUsage else {
+            return MenuBarDisplayText.percentText(window: snapshot?.primary, showUsed: showUsed)
+        }
+        let percentText = MenuBarDisplayText.percentText(
+            window: snapshot?.primary,
+            showUsed: showUsed)
+        let creditsLeft = UsageFormatter.kiroCreditNumber(usage.creditsRemaining)
+        let usedTotal = [
+            UsageFormatter.kiroCreditNumber(usage.creditsUsed),
+            UsageFormatter.kiroCreditNumber(usage.creditsTotal),
+        ].joined(separator: " / ")
+
+        switch mode {
+        case .automatic, .creditsLeft:
+            if usage.creditsTotal > 0 {
+                return creditsLeft
+            }
+            return percentText
+        case .hidden:
+            return nil
+        case .percentLeft:
+            return MenuBarDisplayText.percentText(window: snapshot?.primary, showUsed: false)
+        case .creditsAndPercent:
+            guard usage.creditsTotal > 0 else { return percentText }
+            guard let percentText else { return creditsLeft }
+            return "\(creditsLeft) · \(percentText)"
+        case .usedAndTotal:
+            guard usage.creditsTotal > 0 else { return percentText }
+            return usedTotal
+        case .overageCreditsWhenExhausted:
+            return self.kiroOverageDisplayText(
+                usage: usage,
+                format: .credits,
+                fallback: creditsLeft,
+                percentFallback: percentText)
+        case .overageCostWhenExhausted:
+            return self.kiroOverageDisplayText(
+                usage: usage,
+                format: .cost,
+                fallback: creditsLeft,
+                percentFallback: percentText)
+        case .overageCreditsAndCostWhenExhausted:
+            return self.kiroOverageDisplayText(
+                usage: usage,
+                format: .creditsAndCost,
+                fallback: creditsLeft,
+                percentFallback: percentText)
+        }
+    }
+
+    private enum KiroOverageDisplayFormat {
+        case credits
+        case cost
+        case creditsAndCost
+    }
+
+    private nonisolated static func kiroOverageDisplayText(
+        usage: KiroUsageDetails,
+        format: KiroOverageDisplayFormat,
+        fallback: String,
+        percentFallback: String?)
+        -> String?
+    {
+        guard usage.creditsTotal > 0 else { return percentFallback }
+        guard usage.creditsRemaining <= 0 else { return fallback }
+        guard usage.overagesStatus?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .hasPrefix("enabled") == true
+        else {
+            return fallback
+        }
+
+        let credits = usage.overageCreditsUsed.map { "\(UsageFormatter.kiroCreditNumber($0)) over" }
+        let cost = usage.estimatedOverageCostUSD.map { "\(UsageFormatter.usdString($0)) over" }
+
+        switch format {
+        case .credits:
+            return credits ?? cost ?? fallback
+        case .cost:
+            return cost ?? credits ?? fallback
+        case .creditsAndCost:
+            if let credits, let cost {
+                let creditsValue = credits.replacingOccurrences(of: " over", with: "")
+                let costValue = cost.replacingOccurrences(of: " over", with: "")
+                return "\(creditsValue) · \(costValue)"
+            }
+            return credits ?? cost ?? fallback
+        }
+    }
+
+    private nonisolated static func displayValue(
+        from text: String?,
+        prefix: String,
+        removingSuffix suffix: String)
+        -> String?
+    {
+        guard let rawValue = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              rawValue.hasPrefix(prefix)
+        else {
+            return nil
+        }
+        let valueStart = rawValue.index(rawValue.startIndex, offsetBy: prefix.count)
+        var value = rawValue[valueStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !suffix.isEmpty, value.hasSuffix(suffix) {
+            value = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value.isEmpty ? nil : value
     }
 
     private func menuBarPercentWindow(for provider: UsageProvider, snapshot: UsageSnapshot?) -> RateWindow? {
@@ -773,18 +984,6 @@ extension StatusItemController {
         } else {
             UsageProvider.allCases.forEach { self.applyIcon(for: $0, phase: self.animationPhase) }
         }
-    }
-
-    nonisolated static func shouldUseOpenRouterBrandFallback(
-        provider: UsageProvider,
-        snapshot: UsageSnapshot?) -> Bool
-    {
-        guard provider == .openrouter,
-              let openRouterUsage = snapshot?.openRouterUsage
-        else {
-            return false
-        }
-        return openRouterUsage.keyQuotaStatus == .noLimitConfigured
     }
 
     nonisolated static func brandImageWithStatusOverlay(

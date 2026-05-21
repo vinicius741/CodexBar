@@ -5,6 +5,26 @@ import Testing
 @Suite(.serialized)
 struct CodexUsageFetcherFallbackTests {
     @Test
+    func `missing CLI binary reports install guidance instead of not running`() async throws {
+        let fetcher = UsageFetcher(
+            environment: [:],
+            initializeTimeoutSeconds: 0.1,
+            requestTimeoutSeconds: 0.1,
+            codexExecutableResolver: { _, _ in nil })
+
+        do {
+            _ = try await fetcher.loadLatestCLIAccountSnapshot()
+            Issue.record("Expected missing Codex CLI to throw")
+        } catch CodexStatusProbeError.codexNotInstalled {
+            let message = CodexStatusProbeError.codexNotInstalled.localizedDescription
+            #expect(message.contains("Codex CLI missing"))
+            #expect(!message.contains("Codex not running"))
+        } catch {
+            Issue.record("Expected CodexStatusProbeError.codexNotInstalled, got \(type(of: error)): \(error)")
+        }
+    }
+
+    @Test
     func `CLI usage recovers from RPC decode mismatch body payload`() {
         let snapshot = UsageFetcher._recoverCodexRPCUsageFromErrorForTesting(
             Self.decodeMismatchBodyMessage)
@@ -83,6 +103,35 @@ struct CodexUsageFetcherFallbackTests {
         await #expect(throws: UsageError.noRateLimitsFound) {
             _ = try await fetcher.loadLatestUsage()
         }
+    }
+
+    @Test
+    func `CLI usage loads plan only RPC response as unavailable limits`() async throws {
+        let stubCLIPath = try self.makePlanOnlyStubCodexCLI()
+        defer { try? FileManager.default.removeItem(atPath: stubCLIPath) }
+
+        let fetcher = UsageFetcher(environment: ["CODEX_CLI_PATH": stubCLIPath])
+        let snapshot = try await fetcher.loadLatestUsage()
+
+        #expect(snapshot.primary == nil)
+        #expect(snapshot.secondary == nil)
+        #expect(snapshot.accountEmail(for: .codex) == "stub@example.com")
+        #expect(snapshot.loginMethod(for: .codex) == "pro")
+        #expect(snapshot.rateLimitsUnavailable(for: .codex))
+    }
+
+    @Test
+    func `CLI plan and credits response without usage windows keeps unavailable limits`() async throws {
+        let stubCLIPath = try self.makePlanOnlyStubCodexCLI(includeCredits: true)
+        defer { try? FileManager.default.removeItem(atPath: stubCLIPath) }
+
+        let fetcher = UsageFetcher(environment: ["CODEX_CLI_PATH": stubCLIPath])
+        let snapshot = try await fetcher.loadLatestCLIAccountSnapshot()
+
+        #expect(snapshot.usage?.primary == nil)
+        #expect(snapshot.usage?.secondary == nil)
+        #expect(snapshot.usage?.rateLimitsUnavailable(for: .codex) == true)
+        #expect(snapshot.credits?.remaining == 21)
     }
 
     @Test
@@ -294,6 +343,72 @@ struct CodexUsageFetcherFallbackTests {
         return url.path
     }
 
+    private func makePlanOnlyStubCodexCLI(includeCredits: Bool = false) throws -> String {
+        let creditsPayload = includeCredits
+            ? [
+                ",",
+                "                                \"credits\": {",
+                "                                    \"hasCredits\": True,",
+                "                                    \"unlimited\": False,",
+                "                                    \"balance\": \"21\"",
+                "                                }",
+            ].joined(separator: "\n")
+            : ""
+        let script = """
+        #!/usr/bin/python3
+        import json
+        import sys
+
+        args = sys.argv[1:]
+        if "app-server" in args:
+            for line in sys.stdin:
+                if not line.strip():
+                    continue
+                message = json.loads(line)
+                method = message.get("method")
+                if method == "initialized":
+                    continue
+
+                identifier = message.get("id")
+                if method == "initialize":
+                    payload = {"id": identifier, "result": {}}
+                elif method == "account/rateLimits/read":
+                    payload = {
+                        "id": identifier,
+                        "result": {
+                            "rateLimits": {
+                                "planType": "pro"
+                                \(creditsPayload)
+                            }
+                        }
+                    }
+                elif method == "account/read":
+                    payload = {
+                        "id": identifier,
+                        "result": {
+                            "account": {
+                                "type": "chatgpt",
+                                "email": "stub@example.com",
+                                "planType": "pro"
+                            },
+                            "requiresOpenaiAuth": False
+                        }
+                    }
+                else:
+                    payload = {"id": identifier, "result": {}}
+
+                print(json.dumps(payload), flush=True)
+        else:
+            sys.stderr.write("unexpected non app-server Codex invocation\\n")
+            sys.exit(92)
+        """
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-plan-only-stub-\(UUID().uuidString)", isDirectory: false)
+        try Data(script.utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url.path
+    }
+
     private func makeCreditsOnlyStubCodexCLI() throws -> String {
         let script = """
         #!/usr/bin/python3
@@ -355,46 +470,27 @@ struct CodexUsageFetcherFallbackTests {
 
     private func makeHungRateLimitsStubCodexCLI() throws -> String {
         let script = """
-        #!/usr/bin/python3
-        import json
-        import sys
-        import time
+        #!/bin/sh
+        case " $* " in
+          *" app-server "*) ;;
+          *) printf '%s\\n' "unexpected non app-server Codex invocation" >&2; exit 92 ;;
+        esac
 
-        args = sys.argv[1:]
-        if "app-server" in args:
-            for line in sys.stdin:
-                if not line.strip():
-                    continue
-                message = json.loads(line)
-                method = message.get("method")
-                if method == "initialized":
-                    continue
-
-                identifier = message.get("id")
-                if method == "initialize":
-                    payload = {"id": identifier, "result": {}}
-                    print(json.dumps(payload), flush=True)
-                elif method == "account/rateLimits/read":
-                    time.sleep(30)
-                elif method == "account/read":
-                    payload = {
-                        "id": identifier,
-                        "result": {
-                            "account": {
-                                "type": "chatgpt",
-                                "email": "stub@example.com",
-                                "planType": "plus"
-                            },
-                            "requiresOpenaiAuth": False
-                        }
-                    }
-                    print(json.dumps(payload), flush=True)
-                else:
-                    payload = {"id": identifier, "result": {}}
-                    print(json.dumps(payload), flush=True)
-        else:
-            sys.stderr.write("unexpected non app-server Codex invocation\\n")
-            sys.exit(92)
+        while IFS= read -r line; do
+          case "$line" in
+            *'"method":"initialized"'*|*'"method": "initialized"'*)
+              ;;
+            *'"method":"initialize"'*|*'"method": "initialize"'*)
+              printf '%s\\n' '{"id":1,"result":{}}'
+              ;;
+            *'"method":"account/rateLimits/read"'*|*'"method": "account/rateLimits/read"'*)
+              sleep 30
+              ;;
+            *)
+              printf '%s\\n' '{"id":1,"result":{}}'
+              ;;
+          esac
+        done
         """
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("codex-hung-stub-\(UUID().uuidString)", isDirectory: false)

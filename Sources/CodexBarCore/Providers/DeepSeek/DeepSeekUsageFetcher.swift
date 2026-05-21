@@ -135,16 +135,12 @@ public struct DeepSeekUsageFetcher: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = Self.timeoutSeconds
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw DeepSeekUsageError.networkError("Invalid response")
-        }
-
-        guard httpResponse.statusCode == 200 else {
+        let response = try await ProviderHTTPClient.shared.response(for: request)
+        let data = response.data
+        guard response.statusCode == 200 else {
             let body = String(data: data, encoding: .utf8) ?? ""
-            Self.log.error("DeepSeek API returned \(httpResponse.statusCode): \(body)")
-            throw DeepSeekUsageError.apiError("HTTP \(httpResponse.statusCode)")
+            Self.log.error("DeepSeek API returned \(response.statusCode): \(body)")
+            throw DeepSeekUsageError.apiError("HTTP \(response.statusCode)")
         }
 
         if let jsonString = String(data: data, encoding: .utf8) {
@@ -166,11 +162,8 @@ public struct DeepSeekUsageFetcher: Sendable {
             throw DeepSeekUsageError.parseFailed(error.localizedDescription)
         }
 
-        // Prefer USD; fall back to first available entry.
-        let info = decoded.balanceInfos.first { $0.currency == "USD" }
-            ?? decoded.balanceInfos.first
-
-        guard let info else {
+        let balances = try decoded.balanceInfos.map(Self.parseBalanceInfo)
+        guard !balances.isEmpty else {
             return DeepSeekUsageSnapshot(
                 isAvailable: false,
                 currency: "USD",
@@ -180,6 +173,30 @@ public struct DeepSeekUsageFetcher: Sendable {
                 updatedAt: Date())
         }
 
+        // Prefer USD when it is funded, but do not hide a positive CNY balance behind
+        // an empty USD row returned by the API.
+        let selected = balances.first { $0.currency == "USD" && $0.totalBalance > 0 }
+            ?? balances.first { $0.totalBalance > 0 }
+            ?? balances.first { $0.currency == "USD" }
+            ?? balances[0]
+
+        return DeepSeekUsageSnapshot(
+            isAvailable: decoded.isAvailable,
+            currency: selected.currency,
+            totalBalance: selected.totalBalance,
+            grantedBalance: selected.grantedBalance,
+            toppedUpBalance: selected.toppedUpBalance,
+            updatedAt: Date())
+    }
+
+    private struct ParsedBalanceInfo {
+        let currency: String
+        let totalBalance: Double
+        let grantedBalance: Double
+        let toppedUpBalance: Double
+    }
+
+    private static func parseBalanceInfo(_ info: DeepSeekBalanceInfo) throws -> ParsedBalanceInfo {
         guard
             let total = Double(info.totalBalance),
             let granted = Double(info.grantedBalance),
@@ -188,12 +205,10 @@ public struct DeepSeekUsageFetcher: Sendable {
             throw DeepSeekUsageError.parseFailed("Non-numeric balance value in response.")
         }
 
-        return DeepSeekUsageSnapshot(
-            isAvailable: decoded.isAvailable,
+        return ParsedBalanceInfo(
             currency: info.currency,
             totalBalance: total,
             grantedBalance: granted,
-            toppedUpBalance: toppedUp,
-            updatedAt: Date())
+            toppedUpBalance: toppedUp)
     }
 }
